@@ -2,6 +2,7 @@ package grpcclient
 
 import (
 	"context"
+	"crypto/tls"
 	"net"
 	"os"
 	"path/filepath"
@@ -360,12 +361,33 @@ func TestBuilder_Build_WithTLS_UsesCredentials(t *testing.T) {
 
 	builder := NewBuilder().
 		WithAddress("localhost:9090").
-		WithTLS(caFile, "", "", "localhost").
-		WithDialOptions(grpc.WithContextDialer(func(ctx context.Context, s string) (net.Conn, error) {
-			clientConn, serverConn := net.Pipe()
-			go serverConn.Close()
-			return clientConn, nil
-		}))
+		WithTLS(caFile, "", "", "localhost")
+
+	// Test buildTLSConfig directly to verify credentials are configured
+	tlsConfig, err := builder.buildTLSConfig()
+	if err != nil {
+		t.Fatalf("buildTLSConfig failed: %v", err)
+	}
+
+	// Verify TLS config has the expected properties
+	if tlsConfig.MinVersion != tls.VersionTLS12 {
+		t.Errorf("expected MinVersion TLS 1.2, got %v", tlsConfig.MinVersion)
+	}
+
+	if tlsConfig.RootCAs == nil {
+		t.Error("expected RootCAs to be set from CA file")
+	}
+
+	if tlsConfig.ServerName != "localhost" {
+		t.Errorf("expected ServerName 'localhost', got %q", tlsConfig.ServerName)
+	}
+
+	// Also verify the connection can be built (without actually connecting)
+	builder.WithDialOptions(grpc.WithContextDialer(func(ctx context.Context, s string) (net.Conn, error) {
+		clientConn, serverConn := net.Pipe()
+		go serverConn.Close()
+		return clientConn, nil
+	}))
 
 	conn, err := builder.Build(context.Background())
 	if err != nil {

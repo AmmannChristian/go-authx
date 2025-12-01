@@ -524,6 +524,101 @@ func TestBuilder_Build_Integration(t *testing.T) {
 	}
 }
 
+func TestBuilder_Build_WithNonStandardDefaultTransport(t *testing.T) {
+	// Test the fallback path when http.DefaultTransport is not *http.Transport
+	// Save original default transport
+	originalTransport := http.DefaultTransport
+	defer func() { http.DefaultTransport = originalTransport }()
+
+	// Set a custom default transport that is not *http.Transport
+	customDefault := &mockRoundTripper{}
+	http.DefaultTransport = customDefault
+
+	builder := NewBuilder()
+	client, err := builder.Build()
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	if client == nil {
+		t.Fatal("expected client to be created")
+	}
+
+	// Should use the non-standard default transport
+	if client.Transport != customDefault {
+		t.Error("expected to use custom default transport")
+	}
+}
+
+func TestBuilder_Build_WithNonStandardDefaultTransport_AndTLS(t *testing.T) {
+	// Test the fallback path when http.DefaultTransport is *http.Transport but TLS needs to be applied
+	// Save original default transport
+	originalTransport := http.DefaultTransport
+	defer func() { http.DefaultTransport = originalTransport }()
+
+	// Set a standard transport as default
+	http.DefaultTransport = &http.Transport{}
+
+	// Create temporary CA file
+	tmpDir := t.TempDir()
+	caFile := filepath.Join(tmpDir, "ca.crt")
+	testutil.WriteTestCACert(t, caFile)
+
+	builder := NewBuilder().WithTLS(caFile, "", "")
+	client, err := builder.Build()
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	if client == nil {
+		t.Fatal("expected client to be created")
+	}
+
+	// Verify TLS is configured
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatal("expected *http.Transport")
+	}
+
+	if transport.TLSClientConfig == nil {
+		t.Error("expected TLS config to be set")
+	}
+}
+
+func TestBuilder_Build_DefaultTLSConfig(t *testing.T) {
+	// Test that secure TLS defaults are set even without explicit TLS configuration
+	builder := NewBuilder()
+	client, err := builder.Build()
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatal("expected *http.Transport")
+	}
+
+	if transport.TLSClientConfig == nil {
+		t.Error("expected TLS config to be set by default")
+	}
+
+	if transport.TLSClientConfig.MinVersion != tls.VersionTLS12 {
+		t.Errorf("expected min TLS 1.2, got %d", transport.TLSClientConfig.MinVersion)
+	}
+}
+
+// mockRoundTripper is a test double for http.RoundTripper
+type mockRoundTripper struct{}
+
+func (m *mockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader("test")),
+		Request:    req,
+	}, nil
+}
+
 // Benchmark tests
 func BenchmarkBuilder_Build(b *testing.B) {
 	b.ResetTimer()

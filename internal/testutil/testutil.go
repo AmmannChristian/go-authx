@@ -6,6 +6,8 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"io"
 	"math/big"
@@ -168,4 +170,44 @@ func WriteTestCertAndKey(tb testing.TB, certPath, keyPath string) {
 	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
 		tb.Fatalf("failed to write key: %v", err)
 	}
+}
+
+// CreateJWKSServer creates a mock JWKS server with proper RSA public key encoding.
+// This is used for JWT validation integration tests.
+func CreateJWKSServer(tb testing.TB, publicKey *rsa.PublicKey) *httptest.Server {
+	tb.Helper()
+
+	// Encode public key modulus and exponent to base64url
+	nBytes := publicKey.N.Bytes()
+	eBytes := big.NewInt(int64(publicKey.E)).Bytes()
+
+	n := encodeBase64URL(nBytes)
+	e := encodeBase64URL(eBytes)
+
+	jwks := map[string]interface{}{
+		"keys": []map[string]interface{}{
+			{
+				"kty": "RSA",
+				"kid": "test-key-1",
+				"use": "sig",
+				"alg": "RS256",
+				"n":   n,
+				"e":   e,
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(jwks); err != nil {
+			tb.Fatalf("failed to encode JWKS: %v", err)
+		}
+	}))
+
+	return server
+}
+
+// encodeBase64URL encodes bytes to base64url (without padding) as required by JWK spec.
+func encodeBase64URL(data []byte) string {
+	return base64.RawURLEncoding.EncodeToString(data)
 }

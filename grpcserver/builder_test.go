@@ -1,11 +1,14 @@
 package grpcserver
 
 import (
+	"fmt"
+	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/AmmannChristian/go-authx/internal/testutil"
 )
 
 func TestNewValidatorBuilder(t *testing.T) {
@@ -155,14 +158,25 @@ func TestDeriveJWKSURL(t *testing.T) {
 }
 
 func TestValidatorBuilder_Build_InvalidJWKS(t *testing.T) {
-	// This test verifies that Build returns an error when JWKS URL is unreachable
+	client := &http.Client{
+		Transport: testutil.RoundTripFunc(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusInternalServerError,
+				Body:       io.NopCloser(strings.NewReader("server error")),
+				Header:     make(http.Header),
+				Request:    r,
+			}, nil
+		}),
+		Timeout: 1 * time.Second,
+	}
+
 	builder := NewValidatorBuilder("https://auth.example.com", "my-api").
-		WithJWKSURL("https://nonexistent-jwks-url-12345.example.com/jwks.json").
-		WithHTTPClient(&http.Client{Timeout: 1 * time.Second})
+		WithJWKSURL("https://auth.example.com/jwks.json").
+		WithHTTPClient(client)
 
 	_, err := builder.Build()
 	if err == nil {
-		t.Error("expected error when JWKS URL is unreachable")
+		t.Error("expected error when JWKS URL returns error")
 	}
 	if !strings.Contains(err.Error(), "failed to build validator") {
 		t.Errorf("unexpected error message: %v", err)
@@ -170,20 +184,24 @@ func TestValidatorBuilder_Build_InvalidJWKS(t *testing.T) {
 }
 
 func TestValidatorBuilder_Build_Success(t *testing.T) {
-	// Create a mock JWKS server
-	server := http.NewServeMux()
-	server.HandleFunc("/jwks.json", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"keys":[]}`))
-	})
-	ts := httptest.NewServer(server)
-	defer ts.Close()
+	client := &http.Client{
+		Transport: testutil.RoundTripFunc(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"keys":[]}`)),
+				Request:    r,
+			}, nil
+		}),
+		Timeout: 1 * time.Second,
+	}
 
 	// Build validator with mock JWKS server
 	validator, err := NewValidatorBuilder("https://auth.example.com", "my-api").
-		WithJWKSURL(ts.URL + "/jwks.json").
+		WithJWKSURL("https://auth.example.com/jwks.json").
 		WithCacheTTL(5 * time.Minute).
 		WithLogger(&mockLogger{}).
+		WithHTTPClient(client).
 		Build()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -199,19 +217,26 @@ func TestValidatorBuilder_Build_Success(t *testing.T) {
 }
 
 func TestValidatorBuilder_Build_DerivedJWKSURL(t *testing.T) {
-	// Create a mock JWKS server at the standard location
-	server := http.NewServeMux()
-	server.HandleFunc("/.well-known/jwks.json", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"keys":[]}`))
-	})
-	ts := httptest.NewServer(server)
-	defer ts.Close()
+	client := &http.Client{
+		Transport: testutil.RoundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path != "/.well-known/jwks.json" {
+				return nil, fmt.Errorf("unexpected path: %s", r.URL.Path)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"keys":[]}`)),
+				Request:    r,
+			}, nil
+		}),
+		Timeout: 1 * time.Second,
+	}
 
 	// Build validator without explicit JWKS URL (should derive it)
 	logger := &mockLogger{}
-	validator, err := NewValidatorBuilder(ts.URL, "my-api").
+	validator, err := NewValidatorBuilder("https://auth.example.com", "my-api").
 		WithLogger(logger).
+		WithHTTPClient(client).
 		Build()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

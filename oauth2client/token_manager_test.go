@@ -202,9 +202,20 @@ func TestTokenManager_GetToken_Concurrent(t *testing.T) {
 }
 
 func TestTokenManager_GetTokenWithContext_DoubleCheckCache(t *testing.T) {
-	block := make(chan struct{})
+	// Use proper synchronization instead of time.Sleep to avoid flaky tests
+	requestStarted := make(chan struct{})
+	requestComplete := make(chan struct{})
+
 	server := testutil.NewMockOAuth2Server(t, func(req *http.Request) (*http.Response, error) {
-		<-block
+		// Signal that the first goroutine has entered the token request
+		select {
+		case requestStarted <- struct{}{}:
+		default:
+		}
+
+		// Wait for signal to complete the request
+		<-requestComplete
+
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     make(http.Header),
@@ -226,21 +237,33 @@ func TestTokenManager_GetTokenWithContext_DoubleCheckCache(t *testing.T) {
 	tokens := make(chan string, 2)
 	errs := make(chan error, 2)
 
-	for i := 0; i < 2; i++ {
-		go func() {
-			defer wg.Done()
-			token, err := tm.GetTokenWithContext(context.Background())
-			if err != nil {
-				errs <- err
-				return
-			}
-			tokens <- token
-		}()
-	}
+	// Start first goroutine
+	go func() {
+		defer wg.Done()
+		token, err := tm.GetTokenWithContext(context.Background())
+		if err != nil {
+			errs <- err
+			return
+		}
+		tokens <- token
+	}()
 
-	// Allow both goroutines to start and the first to enter the token request before unblocking.
-	time.Sleep(10 * time.Millisecond)
-	close(block)
+	// Wait for first goroutine to enter the token request
+	<-requestStarted
+
+	// Start second goroutine - it should wait for the first to complete
+	go func() {
+		defer wg.Done()
+		token, err := tm.GetTokenWithContext(context.Background())
+		if err != nil {
+			errs <- err
+			return
+		}
+		tokens <- token
+	}()
+
+	// Allow the request to complete
+	close(requestComplete)
 
 	wg.Wait()
 
@@ -249,15 +272,22 @@ func TestTokenManager_GetTokenWithContext_DoubleCheckCache(t *testing.T) {
 		t.Fatalf("GetTokenWithContext failed: %v", err)
 	}
 
+	// Both goroutines should have received the same token from a single request
 	if len(server.Requests) != 1 {
-		t.Fatalf("expected single token request, got %d", len(server.Requests))
+		t.Fatalf("expected single token request due to double-check locking, got %d", len(server.Requests))
 	}
 
 	close(tokens)
+	tokensReceived := 0
 	for token := range tokens {
+		tokensReceived++
 		if token != "mock-access-token" {
 			t.Errorf("unexpected token: %s", token)
 		}
+	}
+
+	if tokensReceived != 2 {
+		t.Errorf("expected 2 tokens received, got %d", tokensReceived)
 	}
 }
 

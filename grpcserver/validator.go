@@ -162,17 +162,26 @@ func (v *JWTTokenValidator) ValidateToken(ctx context.Context, tokenString strin
 	if err != nil {
 		return nil, fmt.Errorf("grpcserver: invalid subject claim: %w", err)
 	}
+	if sub == "" {
+		return nil, errors.New("grpcserver: invalid subject claim: empty")
+	}
 
 	// Extract expiry
 	exp, err := claims.GetExpirationTime()
 	if err != nil {
 		return nil, fmt.Errorf("grpcserver: invalid expiry claim: %w", err)
 	}
+	if exp == nil {
+		return nil, errors.New("grpcserver: invalid expiry claim: missing")
+	}
 
 	// Extract issued at
 	iat, err := claims.GetIssuedAt()
 	if err != nil {
 		return nil, fmt.Errorf("grpcserver: invalid issued at claim: %w", err)
+	}
+	if iat == nil {
+		return nil, errors.New("grpcserver: invalid issued at claim: missing")
 	}
 
 	// Extract scopes (can be "scope" or "scp" claim, space-separated string or array)

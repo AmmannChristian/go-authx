@@ -5,14 +5,32 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/AmmannChristian/go-authx/internal/testutil"
 	"github.com/golang-jwt/jwt/v5"
 )
+
+const testJWKSURL = "https://auth.example.com/jwks.json"
+
+func stubJWKSClient(body string, status int) *http.Client {
+	return &http.Client{
+		Transport: testutil.RoundTripFunc(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: status,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Request:    r,
+			}, nil
+		}),
+		Timeout: 5 * time.Second,
+	}
+}
 
 // mockJWKSServer creates a mock JWKS server for testing
 func mockJWKSServer(t *testing.T, privateKey *rsa.PrivateKey) *httptest.Server {
@@ -62,17 +80,12 @@ func generateTestToken(t *testing.T, privateKey *rsa.PrivateKey, claims jwt.MapC
 }
 
 func TestNewJWTTokenValidator(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"keys":[]}`))
-	}))
-	defer server.Close()
-
+	client := stubJWKSClient(`{"keys":[]}`, http.StatusOK)
 	validator, err := NewJWTTokenValidator(
-		server.URL,
+		testJWKSURL,
 		"https://auth.example.com",
 		"my-api",
-		nil,
+		client,
 		0,
 		nil,
 	)
@@ -117,18 +130,13 @@ func TestNewJWTTokenValidator_MissingAudience(t *testing.T) {
 }
 
 func TestNewJWTTokenValidator_WithLogger(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"keys":[]}`))
-	}))
-	defer server.Close()
-
+	client := stubJWKSClient(`{"keys":[]}`, http.StatusOK)
 	logger := &mockLogger{}
 	validator, err := NewJWTTokenValidator(
-		server.URL,
+		testJWKSURL,
 		"https://auth.example.com",
 		"my-api",
-		nil,
+		client,
 		0,
 		logger,
 	)
@@ -143,13 +151,9 @@ func TestNewJWTTokenValidator_WithLogger(t *testing.T) {
 }
 
 func TestValidateToken_InvalidToken(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"keys":[]}`))
-	}))
-	defer server.Close()
+	client := stubJWKSClient(`{"keys":[]}`, http.StatusOK)
 
-	validator, _ := NewJWTTokenValidator(server.URL, "https://auth.example.com", "my-api", nil, 0, nil)
+	validator, _ := NewJWTTokenValidator(testJWKSURL, "https://auth.example.com", "my-api", client, 0, nil)
 	defer validator.Close()
 
 	ctx := context.Background()
@@ -160,13 +164,9 @@ func TestValidateToken_InvalidToken(t *testing.T) {
 }
 
 func TestValidateToken_MalformedToken(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"keys":[]}`))
-	}))
-	defer server.Close()
+	client := stubJWKSClient(`{"keys":[]}`, http.StatusOK)
 
-	validator, _ := NewJWTTokenValidator(server.URL, "https://auth.example.com", "my-api", nil, 0, nil)
+	validator, _ := NewJWTTokenValidator(testJWKSURL, "https://auth.example.com", "my-api", client, 0, nil)
 	defer validator.Close()
 
 	ctx := context.Background()
@@ -293,13 +293,9 @@ func TestContains(t *testing.T) {
 }
 
 func TestJWTTokenValidator_Close(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"keys":[]}`))
-	}))
-	defer server.Close()
+	client := stubJWKSClient(`{"keys":[]}`, http.StatusOK)
 
-	validator, err := NewJWTTokenValidator(server.URL, "https://auth.example.com", "my-api", nil, 0, nil)
+	validator, err := NewJWTTokenValidator(testJWKSURL, "https://auth.example.com", "my-api", client, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -312,14 +308,12 @@ func TestJWTTokenValidator_Close(t *testing.T) {
 }
 
 func TestNewJWTTokenValidator_DefaultHTTPClient(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"keys":[]}`))
-	}))
-	defer server.Close()
+	prev := http.DefaultClient
+	http.DefaultClient = stubJWKSClient(`{"keys":[]}`, http.StatusOK)
+	defer func() { http.DefaultClient = prev }()
 
 	// Pass nil HTTP client - should use default
-	validator, err := NewJWTTokenValidator(server.URL, "https://auth.example.com", "my-api", nil, 0, nil)
+	validator, err := NewJWTTokenValidator(testJWKSURL, "https://auth.example.com", "my-api", nil, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -331,14 +325,12 @@ func TestNewJWTTokenValidator_DefaultHTTPClient(t *testing.T) {
 }
 
 func TestNewJWTTokenValidator_DefaultCacheTTL(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"keys":[]}`))
-	}))
-	defer server.Close()
+	prev := http.DefaultClient
+	http.DefaultClient = stubJWKSClient(`{"keys":[]}`, http.StatusOK)
+	defer func() { http.DefaultClient = prev }()
 
 	// Pass 0 cache TTL - should use default of 1 hour
-	validator, err := NewJWTTokenValidator(server.URL, "https://auth.example.com", "my-api", nil, 0, nil)
+	validator, err := NewJWTTokenValidator(testJWKSURL, "https://auth.example.com", "my-api", nil, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -351,17 +343,19 @@ func TestNewJWTTokenValidator_DefaultCacheTTL(t *testing.T) {
 }
 
 func TestNewJWTTokenValidator_InvalidJWKSURL(t *testing.T) {
+	client := stubJWKSClient("server error", http.StatusInternalServerError)
+
 	_, err := NewJWTTokenValidator(
-		"https://nonexistent-url-12345.example.com/jwks",
+		testJWKSURL,
 		"https://auth.example.com",
 		"my-api",
-		&http.Client{Timeout: 1 * time.Second},
+		client,
 		0,
 		nil,
 	)
 
 	if err == nil {
-		t.Error("expected error when JWKS URL is unreachable")
+		t.Error("expected error when JWKS URL returns error")
 	}
 	if !strings.Contains(err.Error(), "failed to initialize JWKS") {
 		t.Errorf("unexpected error message: %v", err)
