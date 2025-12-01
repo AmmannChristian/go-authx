@@ -1,0 +1,106 @@
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    # Enabled by default
+    - errcheck      # Checks for unchecked errors
+    - gosimple      # Suggests code simplifications
+    - govet         # Reports suspicious constructs
+    - ineffassign   # Detects ineffectual assignments
+    - staticcheck   # Advanced static analysis
+    - unused        # Checks for unused constants, variables, functions and types
+
+    # Additional recommended linters
+    - bodyclose     # Checks whether HTTP response body is closed
+    - exportloopref # Checks for pointers to enclosing loop variables
+    - gochecknoinits # Checks that no init functions are present
+    - goconst       # Finds repeated strings that could be replaced by a constant
+    - gocritic      # Provides diagnostics that check for bugs, performance and style issues
+    - gocyclo       # Computes and checks the cyclomatic complexity of functions
+    - gofmt         # Checks whether code was gofmt-ed
+    - goimports     # Checks import statements are formatted according to goimports
+    - revive        # Fast, configurable, extensible, flexible linter
+    - gosec         # Inspects source code for security problems
+    - misspell      # Finds commonly misspelled English words in comments
+    - nakedret      # Finds naked returns in functions greater than a specified function length
+    - nolintlint    # Reports ill-formed or insufficient nolint directives
+    - prealloc      # Finds slice declarations that could potentially be pre-allocated
+    - stylecheck    # Replacement for golint
+    - typecheck     # Type-checks Go code
+    - unconvert     # Removes unnecessary type conversions
+    - unparam       # Reports unused function parameters
+    - whitespace    # Checks for unnecessary newlines
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment # Too strict for this project
+      - shadow         # Can be too noisy
+
+  gocyclo:
+    min-complexity: 15
+
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+
+  gosec:
+    severity: medium
+    confidence: medium
+    excludes:
+      - G104 # Audit errors not checked (covered by errcheck)
+      - G304 # File path provided as taint input (false positives in tests)
+
+  revive:
+    rules:
+      - name: exported
+        arguments:
+          - "checkPrivateReceivers"
+          - "sayRepetitiveInsteadOfStutters"
+
+  stylecheck:
+    checks: ["all", "-ST1000", "-ST1003", "-ST1016", "-ST1020", "-ST1021", "-ST1022"]
+
+  nakedret:
+    max-func-lines: 30
+
+issues:
+  exclude-rules:
+    # Exclude some linters from running on tests files
+    - path: _test\.go
+      linters:
+        - gocyclo
+        - errcheck
+        - dupl
+        - gosec
+        - goconst
+
+    # Exclude deprecated warnings for GetToken (we marked it deprecated intentionally)
+    - linters:
+        - staticcheck
+      text: "SA1019.*GetToken.*deprecated"
+
+    # Exclude context.WithoutCancel warnings (we use it intentionally for fallback)
+    - linters:
+        - staticcheck
+      text: "SA1029.*context.WithoutCancel"
+
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  new: false
+
+output:
+  formats:
+    - format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+  uniq-by-line: true
+  sort-results: true
