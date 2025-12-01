@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AmmannChristian/go-authx/internal/testutil"
 	"github.com/AmmannChristian/go-authx/oauth2client"
-	"github.com/AmmannChristian/go-authx/testutil"
 )
 
 func newMockOAuth2Server(tb testing.TB) *testutil.MockOAuth2Server {

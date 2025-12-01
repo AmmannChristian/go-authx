@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AmmannChristian/go-authx/testutil"
+	"github.com/AmmannChristian/go-authx/internal/testutil"
 	"google.golang.org/grpc"
 )
 

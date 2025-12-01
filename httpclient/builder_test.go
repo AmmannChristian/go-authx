@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AmmannChristian/go-authx/internal/testutil"
 	"github.com/AmmannChristian/go-authx/oauth2client"
-	"github.com/AmmannChristian/go-authx/testutil"
 )
 
 func newMockOAuth2ServerForBuilder(tb testing.TB) *testutil.MockOAuth2Server {

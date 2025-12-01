@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AmmannChristian/go-authx/testutil"
+	"github.com/AmmannChristian/go-authx/internal/testutil"
 	"golang.org/x/oauth2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
