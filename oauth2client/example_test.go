@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sync"
 
 	"github.com/AmmannChristian/go-authx/oauth2client"
 	"google.golang.org/grpc"
@@ -17,17 +18,27 @@ const bufSize = 1024
 var (
 	bufListener = bufconn.Listen(bufSize)
 	bufServer   = grpc.NewServer()
+	bufOnce     sync.Once
 )
 
-func init() {
-	go func() {
-		_ = bufServer.Serve(bufListener)
-	}()
+func startBufServer() {
+	bufOnce.Do(func() {
+		go func() {
+			_ = bufServer.Serve(bufListener)
+		}()
+	})
 }
 
-func dialBufConn(ctx context.Context, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
+func dialBufConn(opts ...grpc.DialOption) (*grpc.ClientConn, error) {
+	startBufServer()
+
 	dialOpts := []grpc.DialOption{
-		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+		grpc.WithContextDialer(func(c context.Context, _ string) (net.Conn, error) {
+			select {
+			case <-c.Done():
+				return nil, c.Err()
+			default:
+			}
 			return bufListener.Dial()
 		}),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -52,7 +63,6 @@ func Example() {
 
 	// Use with gRPC client
 	conn, err := dialBufConn(
-		ctx,
 		grpc.WithUnaryInterceptor(tm.UnaryClientInterceptor()),
 		grpc.WithStreamInterceptor(tm.StreamClientInterceptor()),
 	)
@@ -120,7 +130,6 @@ func ExampleTokenManager_UnaryClientInterceptor() {
 
 	// Create gRPC connection with unary interceptor
 	conn, err := dialBufConn(
-		ctx,
 		grpc.WithUnaryInterceptor(tm.UnaryClientInterceptor()),
 	)
 	if err != nil {
@@ -146,7 +155,6 @@ func ExampleTokenManager_StreamClientInterceptor() {
 
 	// Create gRPC connection with stream interceptor
 	conn, err := dialBufConn(
-		ctx,
 		grpc.WithStreamInterceptor(tm.StreamClientInterceptor()),
 	)
 	if err != nil {

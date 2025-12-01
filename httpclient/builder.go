@@ -108,7 +108,7 @@ func (b *Builder) WithoutRedirects() *Builder {
 //   - error: Error if configuration is invalid
 func (b *Builder) Build() (*http.Client, error) {
 	// Build base transport
-	var transport http.RoundTripper = b.baseTransport
+	transport := b.baseTransport
 	if transport == nil {
 		if httpTransport, ok := http.DefaultTransport.(*http.Transport); ok {
 			httpTransport = httpTransport.Clone()

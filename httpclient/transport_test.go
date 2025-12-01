@@ -139,7 +139,10 @@ func TestOAuth2Transport_RoundTrip_NilTokenManager(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "http://example.com", nil)
 
-	_, err := transport.RoundTrip(req)
+	resp, err := transport.RoundTrip(req)
+	if resp != nil {
+		resp.Body.Close()
+	}
 	if err == nil {
 		t.Error("expected error for nil TokenManager")
 	}
@@ -161,7 +164,10 @@ func TestOAuth2Transport_RoundTrip_TokenFetchError(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "http://example.com", nil)
 
-	_, err := transport.RoundTrip(req)
+	resp, err := transport.RoundTrip(req)
+	if resp != nil {
+		resp.Body.Close()
+	}
 	if err == nil {
 		t.Error("expected error when token fetch fails")
 	}

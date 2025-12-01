@@ -15,7 +15,6 @@ linters:
 
     # Additional recommended linters
     - bodyclose     # Checks whether HTTP response body is closed
-    - exportloopref # Checks for pointers to enclosing loop variables
     - gochecknoinits # Checks that no init functions are present
     - goconst       # Finds repeated strings that could be replaced by a constant
     - gocritic      # Provides diagnostics that check for bugs, performance and style issues
@@ -73,6 +72,7 @@ linters-settings:
     max-func-lines: 30
 
 issues:
+  uniq-by-line: true
   exclude-rules:
     # Exclude some linters from running on tests files
     - path: _test\.go
@@ -102,5 +102,4 @@ output:
     - format: colored-line-number
   print-issued-lines: true
   print-linter-name: true
-  uniq-by-line: true
   sort-results: true

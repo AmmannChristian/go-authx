@@ -117,6 +117,7 @@ func TestNewTokenManager(t *testing.T) {
 
 func TestNewTokenManager_NilContext(t *testing.T) {
 	//lint:ignore SA1012 intentionally verify nil context falls back to background
+	//nolint:staticcheck // golangci-lint
 	tm := NewTokenManager(nil, "https://auth.example.com/token", "client", "secret", "openid")
 
 	if tm == nil {
@@ -439,9 +440,11 @@ func TestTokenManager_GetTokenWithContext_NilContextAndCache(t *testing.T) {
 	defer server.Close()
 
 	//lint:ignore SA1012 intentionally verify nil context falls back to background
+	//nolint:staticcheck // golangci-lint
 	tm := NewTokenManager(nil, server.URL+"/token", "client", "secret", "openid")
 
 	//lint:ignore SA1012 intentionally verify nil context falls back to background
+	//nolint:staticcheck // golangci-lint
 	token1, err := tm.GetTokenWithContext(nil)
 	if err != nil {
 		t.Fatalf("GetTokenWithContext failed: %v", err)
@@ -451,6 +454,7 @@ func TestTokenManager_GetTokenWithContext_NilContextAndCache(t *testing.T) {
 	}
 
 	//lint:ignore SA1012 intentionally verify nil context falls back to background
+	//nolint:staticcheck // golangci-lint
 	token2, err := tm.GetTokenWithContext(nil)
 	if err != nil {
 		t.Fatalf("second call failed: %v", err)
