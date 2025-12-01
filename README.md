@@ -7,19 +7,29 @@
 [![License](https://img.shields.io/github/license/AmmannChristian/go-authx)](LICENSE)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/AmmannChristian/go-authx)](go.mod)
 
-Reusable Go library for OAuth2 client-credentials authentication with support for both **gRPC** and **HTTP/REST** clients.
+Reusable Go library for OAuth2/OIDC authentication with support for both **client-side** (gRPC/HTTP clients) and **server-side** (gRPC servers) authentication.
 
 ## Features
 
+### Client-Side Authentication
 - **OAuth2 Token Management**: Client-credentials flow with early refresh and scope parsing
 - **Context-Aware Token Fetching**: Respects cancellation and deadlines via `GetTokenWithContext()`
 - **Optional Logging**: Configurable token refresh logging with custom logger support
-- **gRPC Support**: Automatic Bearer injection via interceptors for unary and streaming calls
-- **HTTP/REST Support**: OAuth2-enabled `http.Client` with custom `RoundTripper`
+- **gRPC Client Support**: Automatic Bearer injection via interceptors for unary and streaming calls
+- **HTTP/REST Client Support**: OAuth2-enabled `http.Client` with custom `RoundTripper`
+- **Token Reuse**: Single `TokenManager` can be shared across multiple gRPC and HTTP clients
+
+### Server-Side Authentication
+- **JWT Token Validation**: Validates OAuth2/OIDC Bearer tokens with JWKS
+- **gRPC Server Interceptors**: Automatic token validation for incoming requests
+- **Claims Extraction**: Access user identity, scopes, and custom claims in handlers
+- **Method Exemption**: Exempt specific endpoints (e.g., health checks) from authentication
+- **JWKS Caching**: Automatic caching and refresh of public keys from OIDC providers
+
+### Common Features
 - **Thread-Safe**: Concurrent reads and writes with double-checked locking
 - **TLS/mTLS**: Secure-by-default (TLS 1.2+, system root CAs) with optional custom CA and client certs
-- **Provider-Agnostic**: Works with any OAuth2 provider (tested with Zitadel)
-- **Token Reuse**: Single `TokenManager` can be shared across multiple gRPC and HTTP clients
+- **Provider-Agnostic**: Works with any OAuth2/OIDC provider (tested with Zitadel)
 
 ## Packages
 
@@ -152,6 +162,105 @@ resp, err := client.Get("https://api.example.com/data")
 resp, err := client.Post("https://api.example.com/data", "application/json", body)
 ```
 
+### grpcserver
+
+Server-side OAuth2/OIDC authentication for gRPC servers. Validates incoming Bearer tokens and makes claims available in handlers.
+
+#### Basic Usage
+
+```go
+import "github.com/AmmannChristian/go-authx/grpcserver"
+
+// Create token validator using the fluent builder
+validator, err := grpcserver.NewValidatorBuilder(
+    "https://auth.example.com",  // Issuer URL
+    "my-api",                     // Expected audience
+).Build()
+if err != nil {
+    log.Fatal(err)
+}
+
+// Create gRPC server with authentication interceptors
+server := grpc.NewServer(
+    grpc.UnaryInterceptor(
+        grpcserver.UnaryServerInterceptor(validator),
+    ),
+    grpc.StreamInterceptor(
+        grpcserver.StreamServerInterceptor(validator),
+    ),
+)
+
+// Register your services
+pb.RegisterYourServiceServer(server, &yourService{})
+
+// Start serving
+listener, _ := net.Listen("tcp", ":9090")
+server.Serve(listener)
+```
+
+#### Advanced Configuration
+
+```go
+// Build validator with custom settings
+validator, err := grpcserver.NewValidatorBuilder(issuerURL, audience).
+    WithJWKSURL("https://auth.example.com/.well-known/jwks.json").
+    WithCacheTTL(30 * time.Minute).
+    WithLogger(log.Default()).
+    Build()
+
+// Configure interceptor with exempt methods
+interceptor := grpcserver.UnaryServerInterceptor(
+    validator,
+    grpcserver.WithExemptMethods(
+        "/grpc.health.v1.Health/Check",  // Health check doesn't require auth
+        "/grpc.health.v1.Health/Watch",
+    ),
+    grpcserver.WithInterceptorLogger(log.Default()),
+)
+
+server := grpc.NewServer(grpc.UnaryInterceptor(interceptor))
+```
+
+#### Accessing Claims in Handlers
+
+```go
+func (s *server) GetUserProfile(ctx context.Context, req *pb.Request) (*pb.Response, error) {
+    // Extract token claims from context
+    claims, ok := grpcserver.TokenClaimsFromContext(ctx)
+    if !ok {
+        return nil, status.Error(codes.Unauthenticated, "not authenticated")
+    }
+
+    // Access user information
+    userID := claims.Subject
+    email := claims.Email
+    scopes := claims.Scopes
+
+    // Check required scope
+    if !hasScope(claims.Scopes, "profile:read") {
+        return nil, status.Error(codes.PermissionDenied, "missing scope")
+    }
+
+    // ... your business logic ...
+}
+```
+
+#### Token Claims Structure
+
+The `TokenClaims` struct contains standard OIDC claims:
+
+```go
+type TokenClaims struct {
+    Subject  string    // User identifier (sub claim)
+    Issuer   string    // Token issuer (iss claim)
+    Audience []string  // Intended recipients (aud claim)
+    Expiry   time.Time // Expiration time (exp claim)
+    IssuedAt time.Time // Issued at time (iat claim)
+    Scopes   []string  // OAuth2 scopes (scope/scp claim)
+    Email    string    // User email (optional)
+}
+```
+
 ## Installation
 
 ```bash
@@ -199,15 +308,21 @@ Check the `examples/` directory for complete working examples:
 - `http_client_simple.go` - Simple HTTP client with OAuth2
 - `http_client_advanced.go` - Advanced HTTP client with TLS/mTLS
 - `grpc_and_http_combined.go` - Using both gRPC and HTTP with shared tokens
+- `grpc_server_with_oauth2.go` - gRPC server with OAuth2/OIDC token validation
 
 ## Architecture
 
 ```
 go-authx/
 ├── oauth2client/          # Core OAuth2 token management
-│   └── token_manager.go   # TokenManager with gRPC interceptors
+│   └── token_manager.go   # TokenManager for client credentials flow
 ├── grpcclient/            # gRPC client utilities
-│   └── builder.go         # Fluent builder for gRPC connections
+│   └── builder.go         # Fluent builder for gRPC client connections
+├── grpcserver/            # gRPC server authentication (NEW)
+│   ├── validator.go       # JWT token validation with JWKS
+│   ├── interceptor.go     # Server-side authentication interceptors
+│   ├── builder.go         # Fluent builder for token validators
+│   └── context.go         # Context helpers for token claims
 ├── httpclient/            # HTTP client utilities
 │   ├── transport.go       # OAuth2Transport (http.RoundTripper)
 │   └── builder.go         # Fluent builder for HTTP clients

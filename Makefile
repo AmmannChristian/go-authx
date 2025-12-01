@@ -10,7 +10,7 @@ BUILD_DIR=build
 
 GOTESTFLAGS ?= -count=1 -timeout=2m
 RACE_TESTFLAGS ?= -count=1 -timeout=3m
-UNIT_PKGS ?= ./httpclient/... ./grpcclient/... ./oauth2client/...
+UNIT_PKGS ?= ./httpclient/... ./grpcclient/... ./grpcserver/... ./oauth2client/...
 UNIT_SHUFFLE ?= on
 RACE_SHUFFLE ?= on
 COVER_SHUFFLE ?= off
