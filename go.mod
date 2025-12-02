@@ -1,8 +1,6 @@
 module github.com/AmmannChristian/go-authx
 
-go 1.25.0
-
-toolchain go1.25.3
+go 1.25.5
 
 require (
 	github.com/golangci/golangci-lint v1.64.8

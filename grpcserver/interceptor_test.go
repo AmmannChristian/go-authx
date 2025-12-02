@@ -466,8 +466,9 @@ func TestWithExemptMethods(t *testing.T) {
 }
 
 func TestWrappedServerStream_Context(t *testing.T) {
+	type testKey string
 	originalCtx := context.Background()
-	newCtx := context.WithValue(originalCtx, "test-key", "test-value")
+	newCtx := context.WithValue(originalCtx, testKey("test-key"), "test-value")
 
 	stream := &mockServerStream{ctx: originalCtx}
 	wrapped := &wrappedServerStream{

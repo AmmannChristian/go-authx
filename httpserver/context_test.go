@@ -105,7 +105,8 @@ func TestContextKeyIsolation(t *testing.T) {
 	ctx := context.Background()
 
 	// Add a value with a string key that looks similar
-	ctx = context.WithValue(ctx, "httpserver.token_claims", "fake value")
+	type fakeKey string
+	ctx = context.WithValue(ctx, fakeKey("httpserver.token_claims"), "fake value")
 
 	// Add real claims
 	claims := &TokenClaims{Subject: "user123"}

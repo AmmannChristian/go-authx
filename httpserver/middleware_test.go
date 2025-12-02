@@ -490,11 +490,12 @@ func TestIsExempt(t *testing.T) {
 }
 
 func TestMiddleware_ContextPropagation(t *testing.T) {
+	type testKey string
 	validator := &mockValidator{}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify original context values are still present
-		if val := r.Context().Value("test-key"); val != "test-value" {
+		if val := r.Context().Value(testKey("test-key")); val != "test-value" {
 			t.Error("expected original context values to be preserved")
 		}
 
@@ -515,7 +516,7 @@ func TestMiddleware_ContextPropagation(t *testing.T) {
 
 	// Create request with custom context value
 	req := httptest.NewRequest("GET", "/api/users", nil)
-	ctx := context.WithValue(req.Context(), "test-key", "test-value")
+	ctx := context.WithValue(req.Context(), testKey("test-key"), "test-value")
 	req = req.WithContext(ctx)
 	req.Header.Set("Authorization", "Bearer valid-token")
 
@@ -557,17 +558,18 @@ func TestMiddleware_ChainedMiddleware(t *testing.T) {
 	validator := &mockValidator{}
 
 	// Create a chain of middleware
+	type chainKey string
 	loggerMiddleware := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Add a marker to context to verify chain order
-			ctx := context.WithValue(r.Context(), "logged", true)
+			ctx := context.WithValue(r.Context(), chainKey("logged"), true)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify both middleware ran
-		if val := r.Context().Value("logged"); val != true {
+		if val := r.Context().Value(chainKey("logged")); val != true {
 			t.Error("expected logger middleware to run first")
 		}
 		if _, ok := TokenClaimsFromContext(r.Context()); !ok {

@@ -1,7 +1,7 @@
 # Makefile for go-authx
 # IMPORTANT: This file uses TAB characters for indentation, not spaces!
 
-.PHONY: all test tests test-ci test-cover test-race cover coverage coverage-ci fmt fmt-fix lint gosec govulncheck vet deps tidy clean help
+.PHONY: all test tests test-ci test-cover test-race cover coverage coverage-ci fmt fmt-fix lint staticcheck gosec govulncheck vet deps tidy clean help
 
 # ========================================
 # Variables
@@ -68,14 +68,14 @@ cover:
 gosec:
 	@echo "Running gosec..."
 	@if [ -f tools/ci/.gosec.json ]; then \
-		gosec -exclude-generated -conf tools/ci/.gosec.json ./...; \
+		gosec -exclude-generated -conf tools/ci/.gosec.json -exclude-dir=examples ./...; \
 	else \
-		gosec -exclude-generated ./...; \
+		gosec -exclude-generated -exclude-dir=examples ./...; \
 	fi
 
 govulncheck:
 	@echo "Running govulncheck..."
-	govulncheck ./...
+	govulncheck $(UNIT_PKGS)
 
 coverage-ci:
 	@echo "Generating deterministic coverage profile..."
@@ -108,9 +108,13 @@ lint:
 	@echo "Running linters..."
 	golangci-lint run ./...
 
+staticcheck:
+	@echo "Running staticcheck..."
+	staticcheck $(UNIT_PKGS)
+
 vet:
 	@echo "Running go vet..."
-	go vet ./...
+	go vet $(UNIT_PKGS)
 
 # ========================================
 # Dependencies
@@ -148,6 +152,7 @@ help:
 	@echo "  make coverage      - Alias for 'make cover'"
 	@echo "  make fmt           - Format code with gofumpt/gofmt/goimports"
 	@echo "  make lint          - Run golangci-lint"
+	@echo "  make staticcheck   - Run staticcheck"
 	@echo "  make vet           - Run go vet"
 	@echo "  make gosec         - Run gosec security scanner"
 	@echo "  make govulncheck   - Run govulncheck vulnerability scanner"
