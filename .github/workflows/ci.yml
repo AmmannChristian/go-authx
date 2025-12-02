@@ -37,7 +37,7 @@ jobs:
         run: go mod verify
 
       - name: Run tests with coverage
-        run: make test-ci
+        run: make coverage-ci
 
       - name: Generate coverage report
         run: go tool cover -html=build/coverage.out -o build/coverage.html
@@ -80,7 +80,7 @@ jobs:
         run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
 
       - name: Run golangci-lint
-        run: golangci-lint run --timeout=5m --config=tools/ci/.golangci.yml
+        run: make lint
 
   # Go vet - built-in Go static analyzer
   vet:
@@ -167,7 +167,7 @@ jobs:
           cache: true
 
       - name: Build
-        run: go build -v ./...
+        run: make build
 
       - name: Check for uncommitted changes
         if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.25.4'

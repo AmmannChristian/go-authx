@@ -120,6 +120,8 @@ func NewJWTTokenValidator(jwksURL, issuer, audience string, httpClient *http.Cli
 // Returns:
 //   - *TokenClaims: Extracted token claims if validation succeeds
 //   - error: Error if validation fails
+//
+//nolint:gocyclo // Token validation inherently requires multiple checks
 func (v *JWTTokenValidator) ValidateToken(ctx context.Context, tokenString string) (*TokenClaims, error) {
 	// Parse and validate the JWT token
 	token, err := jwt.Parse(tokenString, v.jwks.Keyfunc, jwt.WithValidMethods([]string{

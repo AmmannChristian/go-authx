@@ -30,11 +30,12 @@ jobs:
 
       - name: Build for multiple platforms
         run: |
-          GOOS=linux GOARCH=amd64 go build -v ./...
-          GOOS=linux GOARCH=arm64 go build -v ./...
-          GOOS=darwin GOARCH=amd64 go build -v ./...
-          GOOS=darwin GOARCH=arm64 go build -v ./...
-          GOOS=windows GOARCH=amd64 go build -v ./...
+          PACKAGES="./httpclient/... ./httpserver/... ./grpcclient/... ./grpcserver/... ./oauth2client/... ./internal/..."
+          GOOS=linux GOARCH=amd64 go build -v $PACKAGES
+          GOOS=linux GOARCH=arm64 go build -v $PACKAGES
+          GOOS=darwin GOARCH=amd64 go build -v $PACKAGES
+          GOOS=darwin GOARCH=arm64 go build -v $PACKAGES
+          GOOS=windows GOARCH=amd64 go build -v $PACKAGES
 
       - name: Generate changelog
         id: changelog

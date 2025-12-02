@@ -1,7 +1,7 @@
 # Makefile for go-authx
 # IMPORTANT: This file uses TAB characters for indentation, not spaces!
 
-.PHONY: all test tests test-ci test-cover test-race cover coverage coverage-ci fmt fmt-fix lint staticcheck gosec govulncheck vet deps tidy clean help
+.PHONY: all test tests test-ci test-cover test-race cover coverage coverage-ci fmt fmt-fix lint staticcheck gosec govulncheck vet build deps tidy clean help
 
 # ========================================
 # Variables
@@ -106,7 +106,7 @@ fmt-fix:
 # ========================================
 lint:
 	@echo "Running linters..."
-	golangci-lint run ./...
+	golangci-lint run --timeout=5m --config=tools/ci/.golangci.yml $(UNIT_PKGS)
 
 staticcheck:
 	@echo "Running staticcheck..."
@@ -115,6 +115,14 @@ staticcheck:
 vet:
 	@echo "Running go vet..."
 	go vet $(UNIT_PKGS)
+
+# ========================================
+# Build
+# ========================================
+build:
+	@echo "Building packages..."
+	go build -v $(UNIT_PKGS)
+	@echo "Build complete"
 
 # ========================================
 # Dependencies
@@ -156,6 +164,7 @@ help:
 	@echo "  make vet           - Run go vet"
 	@echo "  make gosec         - Run gosec security scanner"
 	@echo "  make govulncheck   - Run govulncheck vulnerability scanner"
+	@echo "  make build         - Build all packages"
 	@echo "  make deps          - Download dependencies"
 	@echo "  make tidy          - Tidy go.mod and go.sum"
 	@echo "  make clean         - Remove build artifacts"

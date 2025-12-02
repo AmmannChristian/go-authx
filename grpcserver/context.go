@@ -8,7 +8,7 @@ type contextKey string
 // #nosec G101 -- context key, not a credential
 const (
 	// tokenClaimsKey is the context key for storing TokenClaims.
-	tokenClaimsKey contextKey = "grpcserver.token_claims" //nolint:gosec // context key, not a credential
+	tokenClaimsKey contextKey = "grpcserver.token_claims"
 )
 
 // WithTokenClaims returns a new context with the provided TokenClaims.

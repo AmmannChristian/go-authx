@@ -512,7 +512,7 @@ func CreateFailingJWKSServer(tb testing.TB, statusCode int, body string) *httpte
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(statusCode)
-		_, _ = w.Write([]byte(body)) // Error intentionally ignored in test helper
+		_, _ = w.Write([]byte(body)) //nolint:errcheck // Error intentionally ignored in test helper
 	}))
 
 	return server
