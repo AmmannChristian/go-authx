@@ -36,7 +36,7 @@ const (
 	audience  = "my-api"                   // Your API audience
 
 	// Server Configuration
-	serverAddress = ":9090"
+	serverAddress = "127.0.0.1:9090"
 )
 
 // ExampleService is a sample gRPC service

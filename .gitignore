@@ -34,3 +34,5 @@ go.work.sum
 Thumbs.db
 
 build/
+
+.cache

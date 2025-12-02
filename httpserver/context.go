@@ -1,4 +1,4 @@
-package grpcserver
+package httpserver
 
 import "context"
 
@@ -7,15 +7,15 @@ type contextKey string
 
 const (
 	// tokenClaimsKey is the context key for storing TokenClaims.
-	tokenClaimsKey contextKey = "grpcserver.token_claims" //nolint:gosec // context key, not a credential
+	tokenClaimsKey contextKey = "httpserver.token_claims" //nolint:gosec // context key, not a credential
 )
 
 // WithTokenClaims returns a new context with the provided TokenClaims.
-// This is used by the interceptors to store validated token claims in the request context.
+// This is used by the middleware to store validated token claims in the request context.
 //
 // Example:
 //
-//	ctx = grpcserver.WithTokenClaims(ctx, claims)
+//	ctx = httpserver.WithTokenClaims(ctx, claims)
 func WithTokenClaims(ctx context.Context, claims *TokenClaims) context.Context {
 	return context.WithValue(ctx, tokenClaimsKey, claims)
 }
@@ -23,14 +23,15 @@ func WithTokenClaims(ctx context.Context, claims *TokenClaims) context.Context {
 // TokenClaimsFromContext extracts TokenClaims from the context.
 // Returns the claims and true if found, or nil and false if not present.
 //
-// This function should be used in gRPC handlers to access the authenticated user's claims.
+// This function should be used in HTTP handlers to access the authenticated user's claims.
 //
 // Example:
 //
-//	func (s *server) MyMethod(ctx context.Context, req *pb.Request) (*pb.Response, error) {
-//	    claims, ok := grpcserver.TokenClaimsFromContext(ctx)
+//	func handler(w http.ResponseWriter, r *http.Request) {
+//	    claims, ok := httpserver.TokenClaimsFromContext(r.Context())
 //	    if !ok {
-//	        return nil, status.Error(codes.Unauthenticated, "not authenticated")
+//	        http.Error(w, "not authenticated", http.StatusUnauthorized)
+//	        return
 //	    }
 //	    userID := claims.Subject
 //	    // ... use claims ...
@@ -41,19 +42,19 @@ func TokenClaimsFromContext(ctx context.Context) (*TokenClaims, bool) {
 }
 
 // MustTokenClaimsFromContext extracts TokenClaims from the context and panics if not found.
-// This should only be used in handlers where authentication is guaranteed by the interceptor.
+// This should only be used in handlers where authentication is guaranteed by the middleware.
 //
 // Example:
 //
-//	func (s *server) MyMethod(ctx context.Context, req *pb.Request) (*pb.Response, error) {
-//	    claims := grpcserver.MustTokenClaimsFromContext(ctx)
+//	func handler(w http.ResponseWriter, r *http.Request) {
+//	    claims := httpserver.MustTokenClaimsFromContext(r.Context())
 //	    userID := claims.Subject
 //	    // ... use claims ...
 //	}
 func MustTokenClaimsFromContext(ctx context.Context) *TokenClaims {
 	claims, ok := TokenClaimsFromContext(ctx)
 	if !ok {
-		panic("grpcserver: token claims not found in context")
+		panic("httpserver: token claims not found in context")
 	}
 	return claims
 }

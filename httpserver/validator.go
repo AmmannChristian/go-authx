@@ -1,4 +1,4 @@
-package grpcserver
+package httpserver
 
 import (
 	"net/http"
@@ -7,7 +7,7 @@ import (
 	"github.com/AmmannChristian/go-authx/internal/validator"
 )
 
-// NewJWTTokenValidator creates a new JWT token validator for gRPC servers.
+// NewJWTTokenValidator creates a new JWT token validator for HTTP servers.
 //
 // Parameters:
 //   - jwksURL: URL to the JWKS endpoint (e.g., "https://auth.example.com/.well-known/jwks.json")
@@ -21,5 +21,5 @@ import (
 //   - *JWTTokenValidator: Configured validator instance
 //   - error: Error if JWKS initialization fails
 func NewJWTTokenValidator(jwksURL, issuer, audience string, httpClient *http.Client, cacheTTL time.Duration, logger Logger) (*JWTTokenValidator, error) {
-	return validator.NewJWTTokenValidator(jwksURL, issuer, audience, httpClient, cacheTTL, logger, "grpcserver")
+	return validator.NewJWTTokenValidator(jwksURL, issuer, audience, httpClient, cacheTTL, logger, "httpserver")
 }
