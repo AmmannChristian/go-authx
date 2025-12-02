@@ -270,7 +270,7 @@ func TestMiddleware_WithLogger(t *testing.T) {
 	wrappedHandler.ServeHTTP(rr, req)
 
 	// Verify logger was called
-	if len(logger.messages) == 0 {
+	if len(logger.getMessages()) == 0 {
 		t.Error("expected logger to be called")
 	}
 }
@@ -295,11 +295,12 @@ func TestMiddleware_WithLogger_ExemptPath(t *testing.T) {
 	wrappedHandler.ServeHTTP(rr, req)
 
 	// Verify logger was called with exempt path message
-	if len(logger.messages) == 0 {
+	messages := logger.getMessages()
+	if len(messages) == 0 {
 		t.Error("expected logger to log exempt path")
 	}
 	found := false
-	for _, msg := range logger.messages {
+	for _, msg := range messages {
 		if strings.Contains(msg, "exempt") {
 			found = true
 			break
@@ -332,11 +333,12 @@ func TestMiddleware_WithLogger_AuthFailure(t *testing.T) {
 	wrappedHandler.ServeHTTP(rr, req)
 
 	// Verify logger was called with auth failure
-	if len(logger.messages) == 0 {
+	messages := logger.getMessages()
+	if len(messages) == 0 {
 		t.Error("expected logger to log auth failure")
 	}
 	found := false
-	for _, msg := range logger.messages {
+	for _, msg := range messages {
 		if strings.Contains(msg, "authentication failed") {
 			found = true
 			break

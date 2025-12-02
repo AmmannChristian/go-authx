@@ -502,7 +502,7 @@ func TestNewJWTTokenValidator_RefreshErrorHandler(t *testing.T) {
 
 	// Check that logger received refresh error
 	found := false
-	for _, msg := range logger.messages {
+	for _, msg := range logger.getMessages() {
 		if strings.Contains(msg, "JWKS refresh error") {
 			found = true
 			break

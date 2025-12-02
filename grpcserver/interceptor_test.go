@@ -261,7 +261,7 @@ func TestUnaryServerInterceptor_WithLogger(t *testing.T) {
 	}
 
 	// Verify logger was called
-	if len(logger.messages) == 0 {
+	if len(logger.getMessages()) == 0 {
 		t.Error("expected logger to be called")
 	}
 }
@@ -533,7 +533,7 @@ func TestStreamServerInterceptor_WithLogger(t *testing.T) {
 	}
 
 	// Verify logger was called
-	if len(logger.messages) == 0 {
+	if len(logger.getMessages()) == 0 {
 		t.Error("expected logger to be called")
 	}
 }
@@ -640,7 +640,7 @@ func TestUnaryServerInterceptor_ExemptMethod_WithLogger(t *testing.T) {
 	}
 
 	// Verify logger was called for exempt method
-	if len(logger.messages) == 0 {
+	if len(logger.getMessages()) == 0 {
 		t.Error("expected logger to be called")
 	}
 }
@@ -679,7 +679,7 @@ func TestStreamServerInterceptor_ExemptMethod_WithLogger(t *testing.T) {
 	}
 
 	// Verify logger was called for exempt method
-	if len(logger.messages) == 0 {
+	if len(logger.getMessages()) == 0 {
 		t.Error("expected logger to be called")
 	}
 }
@@ -715,7 +715,7 @@ func TestUnaryServerInterceptor_ValidationError_WithLogger(t *testing.T) {
 	}
 
 	// Verify logger was called with error
-	if len(logger.messages) == 0 {
+	if len(logger.getMessages()) == 0 {
 		t.Error("expected logger to be called with error message")
 	}
 }

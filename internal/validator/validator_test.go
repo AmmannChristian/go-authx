@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,14 +18,25 @@ const testJWKSURL = "https://auth.example.com/jwks.json"
 
 // mockLogger implements the Logger interface for testing
 type mockLogger struct {
+	mu       sync.Mutex
 	messages []string
 }
 
 func (m *mockLogger) Printf(format string, args ...any) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.messages == nil {
 		m.messages = make([]string, 0)
 	}
 	m.messages = append(m.messages, fmt.Sprintf(format, args...))
+}
+
+func (m *mockLogger) getMessages() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	msgs := make([]string, len(m.messages))
+	copy(msgs, m.messages)
+	return msgs
 }
 
 func stubJWKSClient(body string, status int) *http.Client {
@@ -264,12 +276,13 @@ func TestValidateToken_SuccessWithLogger(t *testing.T) {
 	}
 
 	// Check that logger was called
-	if len(logger.messages) == 0 {
+	messages := logger.getMessages()
+	if len(messages) == 0 {
 		t.Error("expected logger to be called on successful validation")
 	}
 
 	foundValidationLog := false
-	for _, msg := range logger.messages {
+	for _, msg := range messages {
 		if strings.Contains(msg, "validated token for subject") {
 			foundValidationLog = true
 			break

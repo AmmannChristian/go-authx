@@ -18,11 +18,22 @@ import (
 )
 
 type stubLogger struct {
+	mu       sync.Mutex
 	messages []string
 }
 
 func (l *stubLogger) Printf(format string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.messages = append(l.messages, fmt.Sprintf(format, args...))
+}
+
+func (l *stubLogger) getMessages() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	msgs := make([]string, len(l.messages))
+	copy(msgs, l.messages)
+	return msgs
 }
 
 // Mock OAuth2 server for testing
@@ -510,7 +521,7 @@ func TestTokenManager_WithLogger_LogsOnFetch(t *testing.T) {
 		t.Fatalf("GetTokenWithContext failed: %v", err)
 	}
 
-	if len(logger.messages) == 0 {
+	if len(logger.getMessages()) == 0 {
 		t.Fatal("expected logger to receive messages")
 	}
 }

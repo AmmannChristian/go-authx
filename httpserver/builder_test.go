@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -246,7 +247,7 @@ func TestValidatorBuilder_Build_DerivedJWKSURL(t *testing.T) {
 	}
 
 	// Verify that logger was called with derived JWKS URL message
-	if len(logger.messages) == 0 {
+	if len(logger.getMessages()) == 0 {
 		t.Error("expected logger to log derived JWKS URL")
 	}
 
@@ -258,10 +259,21 @@ func TestValidatorBuilder_Build_DerivedJWKSURL(t *testing.T) {
 
 // mockLogger is a simple logger implementation for testing
 type mockLogger struct {
+	mu       sync.Mutex
 	messages []string
 }
 
 func (m *mockLogger) Printf(format string, args ...any) {
 	// Store messages for verification in tests
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.messages = append(m.messages, format)
+}
+
+func (m *mockLogger) getMessages() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	msgs := make([]string, len(m.messages))
+	copy(msgs, m.messages)
+	return msgs
 }
