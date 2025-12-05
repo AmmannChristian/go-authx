@@ -164,7 +164,7 @@ resp, err := client.Post("https://api.example.com/data", "application/json", bod
 
 ### grpcserver
 
-Server-side OAuth2/OIDC authentication for gRPC servers. Validates incoming Bearer tokens and makes claims available in handlers.
+Server-side OAuth2/OIDC authentication for gRPC servers with TLS/mTLS support. Validates incoming Bearer tokens and makes claims available in handlers.
 
 #### Basic Usage
 
@@ -196,6 +196,46 @@ pb.RegisterYourServiceServer(server, &yourService{})
 // Start serving
 listener, _ := net.Listen("tcp", ":9090")
 server.Serve(listener)
+```
+
+#### TLS/mTLS Configuration
+
+Secure your gRPC server with TLS or mutual TLS (mTLS):
+
+```go
+import (
+    "crypto/tls"
+    "github.com/AmmannChristian/go-authx/grpcserver"
+    "google.golang.org/grpc"
+)
+
+// Configure TLS with server certificates
+tlsConfig := &grpcserver.TLSConfig{
+    CertFile:   "/path/to/server.crt",
+    KeyFile:    "/path/to/server.key",
+    MinVersion: tls.VersionTLS12,
+}
+
+// For mTLS (mutual TLS), add CA and require client certificates
+tlsConfig := &grpcserver.TLSConfig{
+    CertFile:   "/path/to/server.crt",
+    KeyFile:    "/path/to/server.key",
+    CAFile:     "/path/to/ca.crt",
+    ClientAuth: tls.RequireAndVerifyClientCert,
+    MinVersion: tls.VersionTLS12,
+}
+
+// Create server option
+tlsOpt, err := grpcserver.ServerOption(tlsConfig)
+if err != nil {
+    log.Fatal(err)
+}
+
+// Create gRPC server with TLS and authentication
+server := grpc.NewServer(
+    tlsOpt,
+    grpc.UnaryInterceptor(grpcserver.UnaryServerInterceptor(validator)),
+)
 ```
 
 #### Advanced Configuration
@@ -261,6 +301,123 @@ type TokenClaims struct {
 }
 ```
 
+### httpserver
+
+Server-side OAuth2/OIDC authentication middleware for HTTP servers with TLS/mTLS support.
+
+#### Basic Usage
+
+```go
+import "github.com/AmmannChristian/go-authx/httpserver"
+
+// Create token validator
+validator, err := httpserver.NewValidatorBuilder(
+    "https://auth.example.com",
+    "my-api",
+).Build()
+if err != nil {
+    log.Fatal(err)
+}
+
+// Create HTTP handler
+mux := http.NewServeMux()
+mux.HandleFunc("/api/protected", protectedHandler)
+
+// Wrap with authentication middleware
+authHandler := httpserver.Middleware(validator)(mux)
+
+// Start server
+http.ListenAndServe(":8080", authHandler)
+```
+
+#### TLS/mTLS Configuration
+
+Secure your HTTP server with TLS or mutual TLS (mTLS):
+
+```go
+import (
+    "crypto/tls"
+    "net/http"
+    "github.com/AmmannChristian/go-authx/httpserver"
+)
+
+// Configure TLS with server certificates
+tlsConfig := &httpserver.TLSConfig{
+    CertFile:   "/path/to/server.crt",
+    KeyFile:    "/path/to/server.key",
+    MinVersion: tls.VersionTLS12,
+}
+
+// For mTLS (mutual TLS), add CA and require client certificates
+tlsConfig := &httpserver.TLSConfig{
+    CertFile:   "/path/to/server.crt",
+    KeyFile:    "/path/to/server.key",
+    CAFile:     "/path/to/ca.crt",
+    ClientAuth: tls.RequireAndVerifyClientCert,
+    MinVersion: tls.VersionTLS12,
+}
+
+// Create server and configure TLS
+server := &http.Server{
+    Addr:    ":8443",
+    Handler: authHandler,
+}
+
+if err := httpserver.ConfigureServer(server, tlsConfig); err != nil {
+    log.Fatal(err)
+}
+
+// Start HTTPS server
+server.ListenAndServeTLS("", "")
+```
+
+#### Advanced Middleware Configuration
+
+```go
+// Build validator with custom settings
+validator, err := httpserver.NewValidatorBuilder(issuerURL, audience).
+    WithJWKSURL("https://auth.example.com/.well-known/jwks.json").
+    WithCacheTTL(30 * time.Minute).
+    WithLogger(log.Default()).
+    Build()
+
+// Configure middleware with exempt paths
+middleware := httpserver.Middleware(
+    validator,
+    httpserver.WithExemptPaths("/health", "/metrics"),
+    httpserver.WithExemptPathPrefixes("/public/", "/static/"),
+    httpserver.WithMiddlewareLogger(log.Default()),
+)
+
+authHandler := middleware(mux)
+```
+
+#### Accessing Claims in Handlers
+
+```go
+func protectedHandler(w http.ResponseWriter, r *http.Request) {
+    // Extract token claims from context
+    claims, ok := httpserver.TokenClaimsFromContext(r.Context())
+    if !ok {
+        http.Error(w, "Unauthorized", http.StatusUnauthorized)
+        return
+    }
+
+    // Access user information
+    userID := claims.Subject
+    email := claims.Email
+    scopes := claims.Scopes
+
+    // Check required scope
+    if !hasScope(claims.Scopes, "profile:read") {
+        http.Error(w, "Forbidden", http.StatusForbidden)
+        return
+    }
+
+    // ... your business logic ...
+}
+```
+
 ## Installation
 
 ```bash
@@ -318,15 +475,24 @@ go-authx/
 │   └── token_manager.go   # TokenManager for client credentials flow
 ├── grpcclient/            # gRPC client utilities
 │   └── builder.go         # Fluent builder for gRPC client connections
-├── grpcserver/            # gRPC server authentication (NEW)
+├── grpcserver/            # gRPC server authentication
 │   ├── validator.go       # JWT token validation with JWKS
 │   ├── interceptor.go     # Server-side authentication interceptors
 │   ├── builder.go         # Fluent builder for token validators
-│   └── context.go         # Context helpers for token claims
+│   ├── context.go         # Context helpers for token claims
+│   └── tls.go             # TLS/mTLS configuration for gRPC servers
 ├── httpclient/            # HTTP client utilities
 │   ├── transport.go       # OAuth2Transport (http.RoundTripper)
 │   └── builder.go         # Fluent builder for HTTP clients
+├── httpserver/            # HTTP server authentication
+│   ├── validator.go       # JWT token validation with JWKS
+│   ├── middleware.go      # Server-side authentication middleware
+│   ├── builder.go         # Fluent builder for token validators
+│   ├── context.go         # Context helpers for token claims
+│   └── tls.go             # TLS/mTLS configuration for HTTP servers
 └── examples/              # Working examples
+    ├── grpc_tls/          # gRPC server with TLS/mTLS
+    └── http_tls/          # HTTP server with TLS/mTLS
 ```
 
 ## Key Design Principles
@@ -337,6 +503,27 @@ go-authx/
 4. **Secure Defaults**: TLS enabled by default with system root CAs
 5. **Context Awareness**: Token fetches use detached contexts to prevent premature cancellation
 
+## Contributing
+
+We welcome contributions! Please see:
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) - Contribution guidelines
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) - Community standards
+- [SECURITY.md](SECURITY.md) - Security policy and reporting
+
+## Support
+
+Need help? Check out:
+
+- [SUPPORT.md](SUPPORT.md) - How to get help
+- [GitHub Discussions](https://github.com/AmmannChristian/go-authx/discussions) - Ask questions
+- [GitHub Issues](https://github.com/AmmannChristian/go-authx/issues) - Report bugs
+- [pkg.go.dev](https://pkg.go.dev/github.com/AmmannChristian/go-authx) - Full documentation
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for version history and release notes.
+
 ## License
 
-See LICENSE file.
+See [LICENSE](LICENSE) file.
