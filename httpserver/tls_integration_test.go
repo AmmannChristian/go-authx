@@ -143,6 +143,7 @@ func TestNewTLSConfig_WithRealCertificates(t *testing.T) {
 			if !tt.wantErr {
 				if tlsConfig == nil {
 					t.Error("Expected non-nil TLS config")
+					return
 				}
 				if tlsConfig.MinVersion < tls.VersionTLS12 {
 					t.Error("Expected MinVersion >= TLS 1.2")
