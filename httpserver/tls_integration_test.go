@@ -89,13 +89,13 @@ func TestNewTLSConfig_WithRealCertificates(t *testing.T) {
 	keyFile := filepath.Join(tmpDir, "server.key")
 	caFile := filepath.Join(tmpDir, "ca.crt")
 
-	if err := os.WriteFile(certFile, serverCertPEM, 0644); err != nil {
+	if err := os.WriteFile(certFile, serverCertPEM, 0o644); err != nil {
 		t.Fatalf("Failed to write cert file: %v", err)
 	}
-	if err := os.WriteFile(keyFile, serverKeyPEM, 0600); err != nil {
+	if err := os.WriteFile(keyFile, serverKeyPEM, 0o600); err != nil {
 		t.Fatalf("Failed to write key file: %v", err)
 	}
-	if err := os.WriteFile(caFile, caCertPEM, 0644); err != nil {
+	if err := os.WriteFile(caFile, caCertPEM, 0o644); err != nil {
 		t.Fatalf("Failed to write CA file: %v", err)
 	}
 
@@ -163,13 +163,13 @@ func TestConfigureServer_WithRealCertificates(t *testing.T) {
 	keyFile := filepath.Join(tmpDir, "server.key")
 	caFile := filepath.Join(tmpDir, "ca.crt")
 
-	if err := os.WriteFile(certFile, serverCertPEM, 0644); err != nil {
+	if err := os.WriteFile(certFile, serverCertPEM, 0o644); err != nil {
 		t.Fatalf("Failed to write cert file: %v", err)
 	}
-	if err := os.WriteFile(keyFile, serverKeyPEM, 0600); err != nil {
+	if err := os.WriteFile(keyFile, serverKeyPEM, 0o600); err != nil {
 		t.Fatalf("Failed to write key file: %v", err)
 	}
-	if err := os.WriteFile(caFile, caCertPEM, 0644); err != nil {
+	if err := os.WriteFile(caFile, caCertPEM, 0o644); err != nil {
 		t.Fatalf("Failed to write CA file: %v", err)
 	}
 
@@ -230,10 +230,10 @@ func TestTLSConfig_InvalidCertificate(t *testing.T) {
 	keyFile := filepath.Join(tmpDir, "invalid.key")
 
 	// Write invalid data
-	if err := os.WriteFile(certFile, []byte("not a certificate"), 0644); err != nil {
+	if err := os.WriteFile(certFile, []byte("not a certificate"), 0o644); err != nil {
 		t.Fatalf("Failed to write cert file: %v", err)
 	}
-	if err := os.WriteFile(keyFile, []byte("not a key"), 0600); err != nil {
+	if err := os.WriteFile(keyFile, []byte("not a key"), 0o600); err != nil {
 		t.Fatalf("Failed to write key file: %v", err)
 	}
 
@@ -259,14 +259,14 @@ func TestTLSConfig_InvalidCA(t *testing.T) {
 	keyFile := filepath.Join(tmpDir, "server.key")
 	caFile := filepath.Join(tmpDir, "invalid-ca.crt")
 
-	if err := os.WriteFile(certFile, serverCertPEM, 0644); err != nil {
+	if err := os.WriteFile(certFile, serverCertPEM, 0o644); err != nil {
 		t.Fatalf("Failed to write cert file: %v", err)
 	}
-	if err := os.WriteFile(keyFile, serverKeyPEM, 0600); err != nil {
+	if err := os.WriteFile(keyFile, serverKeyPEM, 0o600); err != nil {
 		t.Fatalf("Failed to write key file: %v", err)
 	}
 	// Write invalid CA
-	if err := os.WriteFile(caFile, []byte("not a CA certificate"), 0644); err != nil {
+	if err := os.WriteFile(caFile, []byte("not a CA certificate"), 0o644); err != nil {
 		t.Fatalf("Failed to write CA file: %v", err)
 	}
 
@@ -293,10 +293,10 @@ func TestTLSConfig_MismatchedCertAndKey(t *testing.T) {
 	certFile := filepath.Join(tmpDir, "cert1.crt")
 	keyFile := filepath.Join(tmpDir, "key2.key")
 
-	if err := os.WriteFile(certFile, cert1PEM, 0644); err != nil {
+	if err := os.WriteFile(certFile, cert1PEM, 0o644); err != nil {
 		t.Fatalf("Failed to write cert file: %v", err)
 	}
-	if err := os.WriteFile(keyFile, key2PEM, 0600); err != nil {
+	if err := os.WriteFile(keyFile, key2PEM, 0o600); err != nil {
 		t.Fatalf("Failed to write key file: %v", err)
 	}
 
@@ -322,13 +322,13 @@ func TestTLSConfig_AllClientAuthModes(t *testing.T) {
 	keyFile := filepath.Join(tmpDir, "server.key")
 	caFile := filepath.Join(tmpDir, "ca.crt")
 
-	if err := os.WriteFile(certFile, serverCertPEM, 0644); err != nil {
+	if err := os.WriteFile(certFile, serverCertPEM, 0o644); err != nil {
 		t.Fatalf("Failed to write cert file: %v", err)
 	}
-	if err := os.WriteFile(keyFile, serverKeyPEM, 0600); err != nil {
+	if err := os.WriteFile(keyFile, serverKeyPEM, 0o600); err != nil {
 		t.Fatalf("Failed to write key file: %v", err)
 	}
-	if err := os.WriteFile(caFile, caCertPEM, 0644); err != nil {
+	if err := os.WriteFile(caFile, caCertPEM, 0o644); err != nil {
 		t.Fatalf("Failed to write CA file: %v", err)
 	}
 
