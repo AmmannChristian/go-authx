@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 GitHub Discussions
+    url: https://github.com/AmmannChristian/go-authx/discussions
+    about: Ask questions and discuss ideas with the community
+  - name: 📚 Documentation
+    url: https://pkg.go.dev/github.com/AmmannChristian/go-authx
+    about: View the full documentation on pkg.go.dev
+  - name: 🔒 Security Issue
+    url: https://github.com/AmmannChristian/go-authx/security/advisories/new
+    about: Report a security vulnerability privately
