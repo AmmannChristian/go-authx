@@ -40,13 +40,21 @@ type TLSConfig struct {
 }
 
 // NewServerCredentials creates gRPC credentials from TLS configuration.
-// This is used to enable TLS/mTLS for gRPC servers.
+// This is used to enable TLS/mTLS for gRPC servers with automatic certificate reloading.
 //
 // The function:
-//   - Loads the server certificate and private key
+//   - Validates the server certificate and private key at startup (fail-fast)
+//   - Configures automatic certificate reloading on each TLS handshake
 //   - Optionally loads a CA certificate for client verification (mTLS)
-//   - Creates a TLS configuration with secure defaults
+//   - Creates a TLS configuration with secure defaults (TLS 1.2+)
 //   - Returns gRPC TransportCredentials that can be used with grpc.Creds()
+//
+// Automatic Certificate Reload:
+// Certificates are loaded fresh from disk on each new TLS connection, enabling
+// zero-downtime certificate rotation. This is perfect for environments using
+// certificate management tools like Vault Agent or cert-manager that automatically
+// renew certificates. The server continues running and serves new connections with
+// the updated certificates without requiring a restart.
 //
 // Example usage:
 //
@@ -84,12 +92,24 @@ func NewServerCredentials(cfg *TLSConfig) (credentials.TransportCredentials, err
 		tlsConfig.MinVersion = cfg.MinVersion
 	}
 
-	// Load server certificate and key
-	cert, err := loadCertificate(cfg.CertFile, cfg.KeyFile)
+	// Validate that server certificate and key can be loaded initially
+	// This ensures we fail fast at startup if certificates are invalid or missing
+	_, err := loadCertificate(cfg.CertFile, cfg.KeyFile)
 	if err != nil {
 		return nil, fmt.Errorf("grpcserver: load server certificate: %w", err)
 	}
-	tlsConfig.Certificates = []tls.Certificate{cert}
+
+	// Configure automatic certificate reloading on each TLS handshake
+	// This allows certificates to be rotated without restarting the server
+	certFile := cfg.CertFile
+	keyFile := cfg.KeyFile
+	tlsConfig.GetCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+		cert, err := loadCertificate(certFile, keyFile)
+		if err != nil {
+			return nil, err
+		}
+		return &cert, nil
+	}
 
 	// Load CA certificate for client verification if provided
 	if cfg.CAFile != "" {
