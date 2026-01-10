@@ -76,7 +76,7 @@ See [SECURITY.md](SECURITY.md) for details on our security policy.
 
 **Solution**:
 ```bash
-# Ensure you're using Go 1.23+
+# Ensure you're using Go 1.25.5+
 go version
 
 # Clear module cache

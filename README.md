@@ -238,6 +238,8 @@ server := grpc.NewServer(
 )
 ```
 
+**Automatic Certificate Reload**: Certificates are automatically reloaded on each TLS handshake, enabling zero-downtime certificate rotation. This is perfect for environments using tools like Vault Agent or cert-manager that automatically renew certificates.
+
 #### Advanced Configuration
 
 ```go
@@ -426,7 +428,7 @@ go get github.com/AmmannChristian/go-authx
 
 ## Requirements
 
-- Go 1.23 or higher
+- Go 1.25.4 or higher
 - golang.org/x/oauth2
 - google.golang.org/grpc
 

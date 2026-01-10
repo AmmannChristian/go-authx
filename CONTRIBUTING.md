@@ -35,7 +35,7 @@ This project adheres to a Code of Conduct. By participating, you are expected to
 
 ### Prerequisites
 
-- Go 1.23 or higher
+- Go 1.25.5 or higher
 - Make (optional, but recommended)
 - Git
 

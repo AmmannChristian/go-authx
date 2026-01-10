@@ -11,17 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - TLS/mTLS support for gRPC servers (`grpcserver.TLSConfig`, `grpcserver.ServerOption`)
 - TLS/mTLS support for HTTP servers (`httpserver.TLSConfig`, `httpserver.ConfigureServer`)
 - Support for all TLS ClientAuth modes (NoClientCert to RequireAndVerifyClientCert)
+- **Automatic certificate reloading** for gRPC servers - certificates are now reloaded on each TLS handshake
 - Comprehensive integration tests with generated certificates for TLS
+- Integration tests for certificate reload functionality
 - Examples for TLS-enabled servers (`examples/grpc_tls/`, `examples/http_tls/`)
 
 ### Changed
 - Updated README.md with comprehensive TLS configuration examples
 - Improved architecture documentation with TLS components
+- **Modified `grpcserver.NewServerCredentials()`** to use `GetCertificate` callback for on-demand certificate loading
 
 ### Security
 - TLS 1.2+ enforced as minimum version for all server connections
 - Secure path handling with `os.OpenInRoot` for certificate files
 - Support for mutual TLS (mTLS) with client certificate verification
+- **Zero-downtime certificate rotation** - services can now have certificates rotated (e.g., by Vault Agent or cert-manager) without requiring restart
 
 ## [0.1.3] - 2024-12-05
 
