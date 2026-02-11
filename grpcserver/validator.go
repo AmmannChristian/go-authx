@@ -23,3 +23,37 @@ import (
 func NewJWTTokenValidator(jwksURL, issuer, audience string, httpClient *http.Client, cacheTTL time.Duration, logger Logger) (*JWTTokenValidator, error) {
 	return validator.NewJWTTokenValidator(jwksURL, issuer, audience, httpClient, cacheTTL, logger, "grpcserver")
 }
+
+// NewOpaqueTokenValidator creates a new opaque token validator for gRPC servers.
+//
+// Parameters:
+//   - introspectionURL: OAuth2 introspection endpoint URL
+//   - issuer: Expected token issuer
+//   - audience: Expected token audience
+//   - clientID: OAuth2 client ID for introspection endpoint authentication
+//   - clientSecret: OAuth2 client secret for introspection endpoint authentication
+//   - httpClient: HTTP client for introspection requests (optional, uses http.DefaultClient if nil)
+//   - logger: Optional logger for debugging (can be nil)
+//
+// Returns:
+//   - *OpaqueTokenValidator: Configured validator instance
+//   - error: Error if validator initialization fails
+func NewOpaqueTokenValidator(
+	introspectionURL,
+	issuer,
+	audience,
+	clientID,
+	clientSecret string,
+	httpClient *http.Client,
+	logger Logger,
+) (*OpaqueTokenValidator, error) {
+	return validator.NewOpaqueTokenValidator(
+		introspectionURL,
+		issuer,
+		audience,
+		clientID,
+		clientSecret,
+		httpClient,
+		logger,
+	)
+}

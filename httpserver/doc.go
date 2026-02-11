@@ -7,6 +7,7 @@
 // # Features
 //
 //   - JWT token validation with JWKS (JSON Web Key Set)
+//   - Opaque token validation via OAuth2 introspection (RFC 7662)
 //   - Automatic JWKS caching and refresh
 //   - HTTP middleware for standard http.Handler
 //   - Context-based claims extraction in handlers
@@ -68,6 +69,16 @@
 //	)
 //
 //	http.ListenAndServe(":8080", middleware(mux))
+//
+// Opaque token validation can be enabled using introspection:
+//
+//	validator, err := httpserver.NewValidatorBuilder(issuerURL, audience).
+//	    WithOpaqueTokenIntrospection(
+//	        "https://auth.example.com/oauth2/introspect",
+//	        "introspection-client-id",
+//	        "introspection-client-secret",
+//	    ).
+//	    Build()
 //
 // # Security Considerations
 //

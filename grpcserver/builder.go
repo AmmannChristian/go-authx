@@ -12,12 +12,16 @@ import (
 // ValidatorBuilder provides a fluent interface for constructing a TokenValidator
 // with OAuth2/OIDC configuration.
 type ValidatorBuilder struct {
-	issuerURL  string
-	audience   string
-	jwksURL    string
-	cacheTTL   time.Duration
-	httpClient *http.Client
-	logger     Logger
+	issuerURL        string
+	audience         string
+	jwksURL          string
+	cacheTTL         time.Duration
+	httpClient       *http.Client
+	logger           Logger
+	useOpaqueToken   bool
+	introspectionURL string
+	clientID         string
+	clientSecret     string
 }
 
 // NewValidatorBuilder creates a new validator builder with required parameters.
@@ -99,6 +103,22 @@ func (b *ValidatorBuilder) WithLogger(logger Logger) *ValidatorBuilder {
 	return b
 }
 
+// WithOpaqueTokenIntrospection configures the builder to validate opaque tokens
+// via OAuth2 token introspection (RFC 7662) instead of JWT/JWKS validation.
+//
+// Parameters:
+//   - introspectionURL: OAuth2 introspection endpoint URL
+//   - clientID: OAuth2 client ID for endpoint authentication
+//   - clientSecret: OAuth2 client secret for endpoint authentication
+func (b *ValidatorBuilder) WithOpaqueTokenIntrospection(introspectionURL, clientID, clientSecret string) *ValidatorBuilder {
+	b.useOpaqueToken = true
+	b.introspectionURL = introspectionURL
+	b.clientID = clientID
+	b.clientSecret = clientSecret
+
+	return b
+}
+
 // Build constructs the TokenValidator with the configured options.
 //
 // This method:
@@ -117,6 +137,27 @@ func (b *ValidatorBuilder) Build() (TokenValidator, error) {
 	}
 	if b.audience == "" {
 		return nil, errors.New("grpcserver: audience is required")
+	}
+
+	if b.useOpaqueToken {
+		validator, err := NewOpaqueTokenValidator(
+			b.introspectionURL,
+			b.issuerURL,
+			b.audience,
+			b.clientID,
+			b.clientSecret,
+			b.httpClient,
+			b.logger,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("grpcserver: failed to build opaque token validator: %w", err)
+		}
+
+		if b.logger != nil {
+			b.logger.Printf("grpcserver: using opaque token introspection endpoint: %s", b.introspectionURL)
+		}
+
+		return validator, nil
 	}
 
 	// Derive JWKS URL if not explicitly set

@@ -1,6 +1,7 @@
 package grpcserver
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -73,6 +74,29 @@ func TestValidatorBuilder_WithLogger(t *testing.T) {
 
 	if builder.logger != logger {
 		t.Error("expected custom logger to be set")
+	}
+}
+
+func TestValidatorBuilder_WithOpaqueTokenIntrospection(t *testing.T) {
+	builder := NewValidatorBuilder("https://auth.example.com", "my-api")
+
+	builder.WithOpaqueTokenIntrospection(
+		"https://auth.example.com/oauth2/introspect",
+		"client-id",
+		"client-secret",
+	)
+
+	if !builder.useOpaqueToken {
+		t.Error("expected opaque token mode to be enabled")
+	}
+	if builder.introspectionURL != "https://auth.example.com/oauth2/introspect" {
+		t.Errorf("unexpected introspection URL: %s", builder.introspectionURL)
+	}
+	if builder.clientID != "client-id" {
+		t.Errorf("unexpected client ID: %s", builder.clientID)
+	}
+	if builder.clientSecret != "client-secret" {
+		t.Errorf("unexpected client secret: %s", builder.clientSecret)
 	}
 }
 
@@ -254,6 +278,56 @@ func TestValidatorBuilder_Build_DerivedJWKSURL(t *testing.T) {
 	// Clean up
 	if v, ok := validator.(*JWTTokenValidator); ok {
 		v.Close()
+	}
+}
+
+func TestValidatorBuilder_Build_OpaqueTokenValidator(t *testing.T) {
+	client := &http.Client{
+		Transport: testutil.RoundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.String() != "https://auth.example.com/oauth2/introspect" {
+				return nil, fmt.Errorf("unexpected URL: %s", r.URL.String())
+			}
+
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body: io.NopCloser(strings.NewReader(`{
+					"active": true,
+					"iss": "https://auth.example.com",
+					"aud": ["my-api"],
+					"sub": "user-123"
+				}`)),
+				Request: r,
+			}, nil
+		}),
+	}
+
+	validator, err := NewValidatorBuilder("https://auth.example.com", "my-api").
+		WithOpaqueTokenIntrospection("https://auth.example.com/oauth2/introspect", "client-id", "client-secret").
+		WithHTTPClient(client).
+		Build()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, ok := validator.(*OpaqueTokenValidator); !ok {
+		t.Fatalf("expected *OpaqueTokenValidator, got %T", validator)
+	}
+
+	if _, err := validator.ValidateToken(context.Background(), "opaque-token"); err != nil {
+		t.Fatalf("validator should validate opaque token response: %v", err)
+	}
+}
+
+func TestValidatorBuilder_Build_OpaqueTokenValidator_MissingConfig(t *testing.T) {
+	_, err := NewValidatorBuilder("https://auth.example.com", "my-api").
+		WithOpaqueTokenIntrospection("", "client-id", "client-secret").
+		Build()
+	if err == nil {
+		t.Fatal("expected error for missing introspection URL")
+	}
+	if !strings.Contains(err.Error(), "failed to build opaque token validator") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

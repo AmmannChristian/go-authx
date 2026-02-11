@@ -21,6 +21,7 @@ Reusable Go library for OAuth2/OIDC authentication with support for both **clien
 
 ### Server-Side Authentication
 - **JWT Token Validation**: Validates OAuth2/OIDC Bearer tokens with JWKS
+- **Opaque Token Validation**: Supports RFC 7662 token introspection for opaque access tokens
 - **gRPC Server Interceptors**: Automatic token validation for incoming requests
 - **Claims Extraction**: Access user identity, scopes, and custom claims in handlers
 - **Method Exemption**: Exempt specific endpoints (e.g., health checks) from authentication
@@ -250,6 +251,15 @@ validator, err := grpcserver.NewValidatorBuilder(issuerURL, audience).
     WithLogger(log.Default()).
     Build()
 
+// Or build validator for opaque tokens via introspection
+opaqueValidator, err := grpcserver.NewValidatorBuilder(issuerURL, audience).
+    WithOpaqueTokenIntrospection(
+        "https://auth.example.com/oauth2/introspect",
+        "introspection-client-id",
+        "introspection-client-secret",
+    ).
+    Build()
+
 // Configure interceptor with exempt methods
 interceptor := grpcserver.UnaryServerInterceptor(
     validator,
@@ -381,6 +391,15 @@ validator, err := httpserver.NewValidatorBuilder(issuerURL, audience).
     WithJWKSURL("https://auth.example.com/.well-known/jwks.json").
     WithCacheTTL(30 * time.Minute).
     WithLogger(log.Default()).
+    Build()
+
+// Or build validator for opaque tokens via introspection
+opaqueValidator, err := httpserver.NewValidatorBuilder(issuerURL, audience).
+    WithOpaqueTokenIntrospection(
+        "https://auth.example.com/oauth2/introspect",
+        "introspection-client-id",
+        "introspection-client-secret",
+    ).
     Build()
 
 // Configure middleware with exempt paths

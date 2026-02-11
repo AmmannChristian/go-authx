@@ -1,4 +1,4 @@
-// Package validator provides shared JWT token validation logic for both gRPC and HTTP servers.
+// Package validator provides shared token validation logic for both gRPC and HTTP servers.
 package validator
 
 import (
@@ -13,7 +13,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// TokenValidator validates OAuth2/OIDC JWT tokens.
+// TokenValidator validates OAuth2/OIDC access tokens.
 type TokenValidator interface {
 	ValidateToken(ctx context.Context, token string) (*TokenClaims, error)
 }
