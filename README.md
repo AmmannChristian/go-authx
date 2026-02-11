@@ -447,7 +447,7 @@ go get github.com/AmmannChristian/go-authx
 
 ## Requirements
 
-- Go 1.25.4 or higher
+- Go 1.25.7 or higher
 - golang.org/x/oauth2
 - google.golang.org/grpc
 
