@@ -31,7 +31,7 @@ func main() {
 			return
 		}
 
-		fmt.Fprintf(w, "Hello %s (subject: %s)\n", claims.PreferredUsername, claims.Subject)
+		fmt.Fprintf(w, "Hello %s (subject: %s)\n", claims.Email, claims.Subject)
 	})
 
 	// Public endpoint (exempt from authentication)

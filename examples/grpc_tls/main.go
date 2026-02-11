@@ -1,34 +1,16 @@
 package main
 
 import (
-	"context"
 	"crypto/tls"
 	"log"
 	"net"
 
 	"github.com/AmmannChristian/go-authx/grpcserver"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/health"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
-
-	pb "google.golang.org/grpc/examples/helloworld/helloworld"
 )
-
-// server is used to implement helloworld.GreeterServer.
-type server struct {
-	pb.UnimplementedGreeterServer
-}
-
-// SayHello implements helloworld.GreeterServer
-func (s *server) SayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) {
-	// Extract token claims from context
-	claims, ok := grpcserver.TokenClaimsFromContext(ctx)
-	if !ok {
-		return &pb.HelloReply{Message: "Hello " + in.GetName()}, nil
-	}
-
-	log.Printf("Authenticated user: %s (subject: %s)", claims.PreferredUsername, claims.Subject)
-	return &pb.HelloReply{Message: "Hello " + in.GetName() + " (authenticated)"}, nil
-}
 
 func main() {
 	// Create OAuth2 validator
@@ -67,7 +49,9 @@ func main() {
 	)
 
 	// Register services
-	pb.RegisterGreeterServer(grpcServer, &server{})
+	healthServer := health.NewServer()
+	healthpb.RegisterHealthServer(grpcServer, healthServer)
+	healthServer.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
 	reflection.Register(grpcServer)
 
 	// Start server
