@@ -96,6 +96,65 @@ func TestNewOpaqueTokenValidator_MissingRequiredFields(t *testing.T) {
 	}
 }
 
+func TestNewOpaqueTokenValidator_InvalidIntrospectionURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		wantErr string
+	}{
+		{
+			name:    "invalid URL syntax",
+			url:     "://invalid",
+			wantErr: "invalid introspection URL",
+		},
+		{
+			name:    "relative URL",
+			url:     "/oauth2/introspect",
+			wantErr: "must be absolute",
+		},
+		{
+			name:    "non-https URL",
+			url:     "http://auth.example.com/oauth2/introspect",
+			wantErr: "must use https",
+		},
+		{
+			name:    "URL with userinfo",
+			url:     "https://user:pass@auth.example.com/oauth2/introspect",
+			wantErr: "must not include user info",
+		},
+		{
+			name:    "URL with query",
+			url:     "https://auth.example.com/oauth2/introspect?x=1",
+			wantErr: "must not include query or fragment",
+		},
+		{
+			name:    "private IP",
+			url:     "https://127.0.0.1/oauth2/introspect",
+			wantErr: "must not use local or private IP addresses",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewOpaqueTokenValidator(
+				tt.url,
+				"https://auth.example.com",
+				"my-api",
+				"client-id",
+				"client-secret",
+				nil,
+				nil,
+			)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
 func TestOpaqueTokenValidator_ValidateToken_Success(t *testing.T) {
 	now := time.Now().UTC()
 

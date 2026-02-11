@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -61,12 +62,17 @@ func NewOpaqueTokenValidator(
 		return nil, errors.New("validator: introspection client secret is required")
 	}
 
+	normalizedIntrospectionURL, err := normalizeIntrospectionURL(introspectionURL)
+	if err != nil {
+		return nil, err
+	}
+
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
 
 	return &OpaqueTokenValidator{
-		introspectionURL: introspectionURL,
+		introspectionURL: normalizedIntrospectionURL,
 		issuer:           issuer,
 		audience:         audience,
 		clientID:         clientID,
@@ -355,4 +361,41 @@ func parseUnixTimeClaim(raw interface{}) (time.Time, error) {
 	default:
 		return time.Time{}, fmt.Errorf("unexpected type %T", raw)
 	}
+}
+
+func normalizeIntrospectionURL(rawURL string) (string, error) {
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("validator: invalid introspection URL: %w", err)
+	}
+
+	if !parsedURL.IsAbs() {
+		return "", errors.New("validator: introspection URL must be absolute")
+	}
+	if parsedURL.Scheme != "https" {
+		return "", errors.New("validator: introspection URL must use https")
+	}
+	if parsedURL.Host == "" {
+		return "", errors.New("validator: introspection URL host is required")
+	}
+	if parsedURL.User != nil {
+		return "", errors.New("validator: introspection URL must not include user info")
+	}
+	if parsedURL.RawQuery != "" || parsedURL.Fragment != "" {
+		return "", errors.New("validator: introspection URL must not include query or fragment")
+	}
+
+	host := parsedURL.Hostname()
+	if ipAddress, parseErr := netip.ParseAddr(host); parseErr == nil {
+		if ipAddress.IsLoopback() ||
+			ipAddress.IsPrivate() ||
+			ipAddress.IsLinkLocalUnicast() ||
+			ipAddress.IsLinkLocalMulticast() ||
+			ipAddress.IsMulticast() ||
+			ipAddress.IsUnspecified() {
+			return "", errors.New("validator: introspection URL must not use local or private IP addresses")
+		}
+	}
+
+	return parsedURL.String(), nil
 }
