@@ -232,6 +232,7 @@ func (v *OpaqueTokenValidator) newIntrospectionRequest(ctx context.Context, toke
 		}
 		values.Set("client_assertion_type", introspectionClientAssertionTypeJWTBearer)
 		values.Set("client_assertion", assertion)
+		values.Set("client_id", v.authConfig.ClientID)
 	default:
 		return nil, fmt.Errorf("validator: unsupported introspection client auth method %q", v.authConfig.Method)
 	}

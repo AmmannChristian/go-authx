@@ -14,6 +14,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
@@ -650,6 +651,78 @@ func TestOpaqueTokenValidator_ValidateToken_PrivateKeyJWTRequestAndClaims(t *tes
 	}
 	if jtis[0] == jtis[1] {
 		t.Fatal("expected unique jti per request")
+	}
+}
+
+func TestOpaqueTokenValidator_ValidateToken_PrivateKeyJWTRequestIncludesClientID(t *testing.T) {
+	privateKey := mustGenerateRSAKey(t)
+
+	var (
+		tokenValue               string
+		tokenTypeHintValue       string
+		clientAssertionTypeValue string
+		clientAssertionValue     string
+		clientIDValue            string
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed to read request body: %v", err)
+		}
+
+		values, err := url.ParseQuery(string(bodyBytes))
+		if err != nil {
+			t.Fatalf("failed to parse form body: %v", err)
+		}
+
+		tokenValue = values.Get("token")
+		tokenTypeHintValue = values.Get("token_type_hint")
+		clientAssertionTypeValue = values.Get("client_assertion_type")
+		clientAssertionValue = values.Get("client_assertion")
+		clientIDValue = values.Get("client_id")
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"active": true,
+			"iss": "https://auth.example.com",
+			"aud": ["my-api"],
+			"sub": "user-123"
+		}`))
+	}))
+	defer server.Close()
+
+	v := &OpaqueTokenValidator{
+		introspectionURL: server.URL,
+		issuer:           "https://auth.example.com",
+		audience:         "my-api",
+		authConfig: IntrospectionClientAuthConfig{
+			Method:                 IntrospectionClientAuthMethodPrivateKeyJWT,
+			ClientID:               "client-id",
+			PrivateKeyJWTAlgorithm: IntrospectionPrivateKeyJWTAlgorithmRS256,
+		},
+		privateKey: privateKey,
+		httpClient: server.Client(),
+	}
+
+	if _, err := v.ValidateToken(context.Background(), "opaque-token"); err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+
+	if tokenValue != "opaque-token" {
+		t.Fatalf("unexpected token value: %q", tokenValue)
+	}
+	if tokenTypeHintValue != introspectionTokenTypeHintAccessToken {
+		t.Fatalf("unexpected token_type_hint: %q", tokenTypeHintValue)
+	}
+	if clientAssertionTypeValue != introspectionClientAssertionTypeJWTBearer {
+		t.Fatalf("unexpected client_assertion_type: %q", clientAssertionTypeValue)
+	}
+	if clientAssertionValue == "" {
+		t.Fatal("expected client_assertion to be non-empty")
+	}
+	if clientIDValue != "client-id" {
+		t.Fatalf("unexpected client_id value: %q", clientIDValue)
 	}
 }
 
