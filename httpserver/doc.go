@@ -12,6 +12,7 @@
 //   - HTTP middleware for standard http.Handler
 //   - Context-based claims extraction in handlers
 //   - Path exemption (e.g., for health checks, metrics)
+//   - Optional provider-agnostic authorization policies (roles/scopes)
 //   - Configurable logging
 //   - Thread-safe
 //   - Provider-agnostic (works with any OIDC-compliant provider)
@@ -63,6 +64,9 @@
 //
 //	middleware := httpserver.Middleware(
 //	    validator,
+//	    httpserver.WithAuthorizationPolicy(httpserver.AuthorizationPolicy{
+//	        RequiredScopes: []string{"api.read"},
+//	    }),
 //	    httpserver.WithExemptPaths("/health", "/metrics"),
 //	    httpserver.WithExemptPathPrefixes("/public/"),
 //	    httpserver.WithMiddlewareLogger(log.Default()),
@@ -122,7 +126,8 @@
 // # Error Handling
 //
 // Authentication failures return HTTP 401 Unauthorized by default.
-// You can customize the status code and error response using WithUnauthorizedHandler:
+// Authorization failures return HTTP 403 Forbidden.
+// You can customize authentication responses using WithUnauthorizedHandler:
 //
 //	middleware := httpserver.Middleware(
 //	    validator,

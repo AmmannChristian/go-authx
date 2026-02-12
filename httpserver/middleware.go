@@ -3,6 +3,8 @@ package httpserver
 import (
 	"net/http"
 	"strings"
+
+	"github.com/AmmannChristian/go-authx/authz"
 )
 
 // MiddlewareConfig holds configuration for authentication middleware.
@@ -13,6 +15,8 @@ type MiddlewareConfig struct {
 	logger              Logger          // optional logger
 	tokenExtractor      TokenExtractor  // custom token extraction logic (optional)
 	unauthorizedHandler UnauthorizedHandler
+	forbiddenHandler    ForbiddenHandler
+	authorizer          *authz.Evaluator
 }
 
 // MiddlewareOption is a functional option for configuring middleware.
@@ -25,6 +29,10 @@ type TokenExtractor func(r *http.Request) (string, bool)
 // UnauthorizedHandler is a function that handles authentication failures.
 // It allows custom error responses for unauthenticated requests.
 type UnauthorizedHandler func(w http.ResponseWriter, r *http.Request, err error)
+
+// ForbiddenHandler is a function that handles authorization failures.
+// It allows custom error responses for authenticated but unauthorized requests.
+type ForbiddenHandler func(w http.ResponseWriter, r *http.Request, err error)
 
 // WithExemptPaths specifies HTTP paths that don't require authentication.
 // These paths must match exactly.
@@ -78,6 +86,22 @@ func WithUnauthorizedHandler(handler UnauthorizedHandler) MiddlewareOption {
 	}
 }
 
+// WithForbiddenHandler sets a custom handler for authorization failures.
+// By default, returns HTTP 403 with a plain text error message.
+func WithForbiddenHandler(handler ForbiddenHandler) MiddlewareOption {
+	return func(c *MiddlewareConfig) {
+		c.forbiddenHandler = handler
+	}
+}
+
+// WithAuthorizationPolicy enables provider-agnostic authorization checks.
+// Authorization runs after successful authentication.
+func WithAuthorizationPolicy(policy AuthorizationPolicy) MiddlewareOption {
+	return func(c *MiddlewareConfig) {
+		c.authorizer = authz.NewEvaluator(policy)
+	}
+}
+
 // Middleware returns an HTTP middleware that validates OAuth2/OIDC Bearer tokens.
 //
 // The middleware:
@@ -103,6 +127,10 @@ func Middleware(validator TokenValidator, opts ...MiddlewareOption) func(http.Ha
 		unauthorizedHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 		},
+		forbiddenHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			http.Error(w, err.Error(), http.StatusForbidden)
+		},
+		authorizer: authz.NewEvaluator(authz.AuthorizationPolicy{}),
 	}
 
 	for _, opt := range opts {
@@ -127,6 +155,14 @@ func Middleware(validator TokenValidator, opts ...MiddlewareOption) func(http.Ha
 					config.logger.Printf("httpserver: authentication failed for %s %s: %v", r.Method, r.URL.Path, err)
 				}
 				config.unauthorizedHandler(w, r, err)
+				return
+			}
+
+			if err := authorizeClaims(config.authorizer, claims); err != nil {
+				if config.logger != nil {
+					config.logger.Printf("httpserver: authorization failed for %s %s: %v", r.Method, r.URL.Path, err)
+				}
+				config.forbiddenHandler(w, r, err)
 				return
 			}
 
@@ -194,4 +230,12 @@ func extractAndValidateToken(r *http.Request, config *MiddlewareConfig) (*TokenC
 	}
 
 	return claims, nil
+}
+
+func authorizeClaims(authorizer *authz.Evaluator, claims *TokenClaims) error {
+	if authorizer == nil || !authorizer.Enabled() || claims == nil {
+		return nil
+	}
+
+	return authorizer.Authorize(authz.ClaimsForEvaluation(claims.RawClaims, claims.Scopes))
 }

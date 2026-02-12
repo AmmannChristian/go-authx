@@ -717,13 +717,14 @@ func (v *OpaqueTokenValidator) validateAndBuildClaims(introspectionClaims map[st
 	)
 
 	return &TokenClaims{
-		Subject:  subject,
-		Issuer:   issuer,
-		Audience: audience,
-		Expiry:   expiry,
-		IssuedAt: issuedAt,
-		Scopes:   scopes,
-		Email:    email,
+		Subject:   subject,
+		Issuer:    issuer,
+		Audience:  audience,
+		Expiry:    expiry,
+		IssuedAt:  issuedAt,
+		Scopes:    scopes,
+		Email:     email,
+		RawClaims: cloneClaimsMap(introspectionClaims),
 	}, nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/AmmannChristian/go-authx/authz"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -17,6 +18,7 @@ type InterceptorConfig struct {
 	logger           Logger          // optional logger
 	tokenExtractor   TokenExtractor  // custom token extraction logic (optional)
 	unauthorizedCode codes.Code      // gRPC code to return on auth failure (default: Unauthenticated)
+	authorizer       *authz.Evaluator
 }
 
 // InterceptorOption is a functional option for configuring interceptors.
@@ -66,6 +68,14 @@ func WithUnauthorizedCode(code codes.Code) InterceptorOption {
 	}
 }
 
+// WithAuthorizationPolicy enables provider-agnostic authorization checks.
+// Authorization runs after successful authentication.
+func WithAuthorizationPolicy(policy AuthorizationPolicy) InterceptorOption {
+	return func(c *InterceptorConfig) {
+		c.authorizer = authz.NewEvaluator(policy)
+	}
+}
+
 // UnaryServerInterceptor returns a gRPC unary server interceptor that validates
 // OAuth2/OIDC Bearer tokens on incoming requests.
 //
@@ -87,6 +97,7 @@ func UnaryServerInterceptor(validator TokenValidator, opts ...InterceptorOption)
 		validator:        validator,
 		exemptMethods:    make(map[string]bool),
 		unauthorizedCode: codes.Unauthenticated,
+		authorizer:       authz.NewEvaluator(authz.AuthorizationPolicy{}),
 	}
 
 	for _, opt := range opts {
@@ -114,6 +125,13 @@ func UnaryServerInterceptor(validator TokenValidator, opts ...InterceptorOption)
 				config.logger.Printf("grpcserver: authentication failed for %s: %v", info.FullMethod, err)
 			}
 			return nil, status.Error(config.unauthorizedCode, err.Error())
+		}
+
+		if err := authorizeClaims(config.authorizer, claims); err != nil {
+			if config.logger != nil {
+				config.logger.Printf("grpcserver: authorization failed for %s: %v", info.FullMethod, err)
+			}
+			return nil, status.Error(codes.PermissionDenied, err.Error())
 		}
 
 		// Add claims to context
@@ -148,6 +166,7 @@ func StreamServerInterceptor(validator TokenValidator, opts ...InterceptorOption
 		validator:        validator,
 		exemptMethods:    make(map[string]bool),
 		unauthorizedCode: codes.Unauthenticated,
+		authorizer:       authz.NewEvaluator(authz.AuthorizationPolicy{}),
 	}
 
 	for _, opt := range opts {
@@ -175,6 +194,13 @@ func StreamServerInterceptor(validator TokenValidator, opts ...InterceptorOption
 				config.logger.Printf("grpcserver: authentication failed for stream %s: %v", info.FullMethod, err)
 			}
 			return status.Error(config.unauthorizedCode, err.Error())
+		}
+
+		if err := authorizeClaims(config.authorizer, claims); err != nil {
+			if config.logger != nil {
+				config.logger.Printf("grpcserver: authorization failed for stream %s: %v", info.FullMethod, err)
+			}
+			return status.Error(codes.PermissionDenied, err.Error())
 		}
 
 		if config.logger != nil {
@@ -243,4 +269,12 @@ type wrappedServerStream struct {
 // Context returns the wrapped context with token claims.
 func (w *wrappedServerStream) Context() context.Context {
 	return w.ctx
+}
+
+func authorizeClaims(authorizer *authz.Evaluator, claims *TokenClaims) error {
+	if authorizer == nil || !authorizer.Enabled() || claims == nil {
+		return nil
+	}
+
+	return authorizer.Authorize(authz.ClaimsForEvaluation(claims.RawClaims, claims.Scopes))
 }

@@ -1,6 +1,9 @@
 package grpcserver
 
-import "github.com/AmmannChristian/go-authx/internal/validator"
+import (
+	"github.com/AmmannChristian/go-authx/authz"
+	"github.com/AmmannChristian/go-authx/internal/validator"
+)
 
 // TokenValidator validates OAuth2/OIDC JWT tokens.
 // This is an alias for the shared validator.TokenValidator interface.
@@ -41,3 +44,26 @@ type IntrospectionClientAuthConfig = validator.IntrospectionClientAuthConfig
 // Logger is an interface for optional logging in JWTTokenValidator.
 // This is an alias for the shared validator.Logger interface.
 type Logger = validator.Logger
+
+// AuthorizationPolicy configures provider-agnostic authorization checks.
+type AuthorizationPolicy = authz.AuthorizationPolicy
+
+// RoleMatchMode defines how required roles are matched.
+type RoleMatchMode = authz.RoleMatchMode
+
+const (
+	// RoleMatchModeAny allows requests when at least one required role is present.
+	RoleMatchModeAny = authz.RoleMatchModeAny
+	// RoleMatchModeAll allows requests only when all required roles are present.
+	RoleMatchModeAll = authz.RoleMatchModeAll
+)
+
+// ScopeMatchMode defines how required scopes are matched.
+type ScopeMatchMode = authz.ScopeMatchMode
+
+const (
+	// ScopeMatchModeAny allows requests when at least one required scope is present.
+	ScopeMatchModeAny = authz.ScopeMatchModeAny
+	// ScopeMatchModeAll allows requests only when all required scopes are present.
+	ScopeMatchModeAll = authz.ScopeMatchModeAll
+)

@@ -12,6 +12,7 @@
 //   - gRPC server interceptors for unary and streaming calls
 //   - Context-based claims extraction in handlers
 //   - Method exemption (e.g., for health checks)
+//   - Optional provider-agnostic authorization policies (roles/scopes)
 //   - Configurable logging
 //   - Thread-safe
 //   - Provider-agnostic (works with any OIDC-compliant provider)
@@ -60,6 +61,9 @@
 //
 //	interceptor := grpcserver.UnaryServerInterceptor(
 //	    validator,
+//	    grpcserver.WithAuthorizationPolicy(grpcserver.AuthorizationPolicy{
+//	        RequiredRoles: []string{"admin"},
+//	    }),
 //	    grpcserver.WithExemptMethods(
 //	        "/grpc.health.v1.Health/Check",
 //	        "/grpc.health.v1.Health/Watch",
@@ -119,7 +123,8 @@
 // # Error Handling
 //
 // Authentication failures return gRPC errors with codes.Unauthenticated by default.
-// You can customize the error code using WithUnauthorizedCode:
+// Authorization failures return codes.PermissionDenied.
+// You can customize the authentication error code using WithUnauthorizedCode:
 //
 //	interceptor := grpcserver.UnaryServerInterceptor(
 //	    validator,

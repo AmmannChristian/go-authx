@@ -20,13 +20,14 @@ type TokenValidator interface {
 
 // TokenClaims represents the claims extracted from a validated JWT token.
 type TokenClaims struct {
-	Subject  string    // Subject (sub) - user identifier
-	Issuer   string    // Issuer (iss) - token issuer
-	Audience []string  // Audience (aud) - intended recipients
-	Expiry   time.Time // Expiry time (exp)
-	IssuedAt time.Time // Issued at (iat)
-	Scopes   []string  // Scopes - extracted from "scope" or "scp" claim
-	Email    string    // Email - optional user email
+	Subject   string         // Subject (sub) - user identifier
+	Issuer    string         // Issuer (iss) - token issuer
+	Audience  []string       // Audience (aud) - intended recipients
+	Expiry    time.Time      // Expiry time (exp)
+	IssuedAt  time.Time      // Issued at (iat)
+	Scopes    []string       // Scopes - extracted from "scope" or "scp" claim
+	Email     string         // Email - optional user email
+	RawClaims map[string]any // Raw token claims for provider-agnostic authorization checks
 }
 
 // JWTTokenValidator validates JWT tokens against JWKS from an OAuth2/OIDC provider.
@@ -198,13 +199,14 @@ func (v *JWTTokenValidator) ValidateToken(ctx context.Context, tokenString strin
 	}
 
 	tokenClaims := &TokenClaims{
-		Subject:  sub,
-		Issuer:   iss,
-		Audience: aud,
-		Expiry:   exp.Time,
-		IssuedAt: iat.Time,
-		Scopes:   scopes,
-		Email:    email,
+		Subject:   sub,
+		Issuer:    iss,
+		Audience:  aud,
+		Expiry:    exp.Time,
+		IssuedAt:  iat.Time,
+		Scopes:    scopes,
+		Email:     email,
+		RawClaims: cloneClaimsMap(claims),
 	}
 
 	if v.logger != nil {
@@ -212,6 +214,19 @@ func (v *JWTTokenValidator) ValidateToken(ctx context.Context, tokenString strin
 	}
 
 	return tokenClaims, nil
+}
+
+func cloneClaimsMap(source map[string]any) map[string]any {
+	if len(source) == 0 {
+		return nil
+	}
+
+	copied := make(map[string]any, len(source))
+	for key, value := range source {
+		copied[key] = value
+	}
+
+	return copied
 }
 
 // Close releases resources used by the validator.

@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/github/license/AmmannChristian/go-authx)](LICENSE)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/AmmannChristian/go-authx)](go.mod)
 
-Reusable Go library for OAuth2/OIDC authentication with support for both **client-side** (gRPC/HTTP clients) and **server-side** (gRPC servers) authentication.
+Reusable Go library for OAuth2/OIDC authentication with support for both **client-side** (gRPC/HTTP clients) and **server-side** (gRPC/HTTP servers) authentication and authorization.
 
 ## Features
 
@@ -19,13 +19,16 @@ Reusable Go library for OAuth2/OIDC authentication with support for both **clien
 - **HTTP/REST Client Support**: OAuth2-enabled `http.Client` with custom `RoundTripper`
 - **Token Reuse**: Single `TokenManager` can be shared across multiple gRPC and HTTP clients
 
-### Server-Side Authentication
+### Server-Side Authentication & Authorization
 - **JWT Token Validation**: Validates OAuth2/OIDC Bearer tokens with JWKS
 - **Opaque Token Validation**: Supports RFC 7662 token introspection for opaque access tokens
 - **Introspection Client Auth**: Supports `client_secret_basic` (default) and `private_key_jwt` (RFC 7523)
 - **gRPC Server Interceptors**: Automatic token validation for incoming requests
+- **HTTP Middleware**: Automatic token validation for incoming HTTP requests
+- **Optional Authorization Policies**: Provider-agnostic role/scope authorization after successful authN
+- **Configurable Claim Paths**: Dot-notation claim paths for roles/scopes (`realm_access.roles`, `resource_access.<client_id>.roles`, etc.)
 - **Claims Extraction**: Access user identity, scopes, and custom claims in handlers
-- **Method Exemption**: Exempt specific endpoints (e.g., health checks) from authentication
+- **Method/Path Exemption**: Exempt health and public endpoints without changing existing behavior
 - **JWKS Caching**: Automatic caching and refresh of public keys from OIDC providers
 
 ### Common Features
@@ -40,6 +43,18 @@ Reusable Go library for OAuth2/OIDC authentication with support for both **clien
 - When using opaque token introspection, this library supports two client authentication methods from your service to the IdP:
   - `client_secret_basic` (default, backward-compatible)
   - `private_key_jwt` (RFC 7523)
+
+## AuthN vs Authorization
+
+- **AuthN** verifies that the token is valid (signature/introspection, issuer, audience, expiry).
+- **Authorization** verifies that the authenticated principal has required roles/scopes.
+- In `go-authx`, authorization runs **after** successful authN and is optional.
+- If no `RequiredRoles`/`RequiredScopes` are set, authorization is disabled.
+
+## Upgrade Note
+
+- No breaking changes: existing AuthN behavior remains unchanged.
+- Authorization is opt-in and enabled only when a policy with requirements is configured.
 
 ## Packages
 
@@ -172,6 +187,26 @@ resp, err := client.Get("https://api.example.com/data")
 resp, err := client.Post("https://api.example.com/data", "application/json", body)
 ```
 
+### authorization (`authz` package)
+
+Provider-agnostic authorization policy engine used by both `grpcserver` and `httpserver`.
+
+```go
+import "github.com/AmmannChristian/go-authx/authz"
+
+policy := authz.AuthorizationPolicy{
+    RequiredRoles:  []string{"admin"},
+    RequiredScopes: []string{"api.read"},
+    RoleMatchMode:  authz.RoleMatchModeAny,   // default
+    ScopeMatchMode: authz.ScopeMatchModeAny,  // default
+    RoleClaimPaths: []string{"roles"},        // default
+    ScopeClaimPaths: []string{"scope", "scp"}, // default
+}
+
+authorizer := authz.NewEvaluator(policy)
+err := authorizer.Authorize(claimsMap) // returns *authz.PermissionDeniedError on authorization denial
+```
+
 ### grpcserver
 
 Server-side OAuth2/OIDC authentication for gRPC servers with TLS/mTLS support. Validates incoming Bearer tokens and makes claims available in handlers.
@@ -286,6 +321,18 @@ opaqueValidatorPrivateKeyJWT, err := grpcserver.NewValidatorBuilder(issuerURL, a
 // Configure interceptor with exempt methods
 interceptor := grpcserver.UnaryServerInterceptor(
     validator,
+    grpcserver.WithAuthorizationPolicy(grpcserver.AuthorizationPolicy{
+        RequiredRoles:  []string{"admin"},
+        RequiredScopes: []string{"api.read"},
+        RoleMatchMode:  grpcserver.RoleMatchModeAny,
+        ScopeMatchMode: grpcserver.ScopeMatchModeAll,
+        RoleClaimPaths: []string{
+            "roles",
+            "realm_access.roles",
+            "resource_access.my-api.roles",
+        },
+        ScopeClaimPaths: []string{"scope", "scp"},
+    }),
     grpcserver.WithExemptMethods(
         "/grpc.health.v1.Health/Check",  // Health check doesn't require auth
         "/grpc.health.v1.Health/Watch",
@@ -333,6 +380,7 @@ type TokenClaims struct {
     IssuedAt time.Time // Issued at time (iat claim)
     Scopes   []string  // OAuth2 scopes (scope/scp claim)
     Email    string    // User email (optional)
+    RawClaims map[string]any // Raw claims (for advanced authorization use cases)
 }
 ```
 
@@ -442,8 +490,23 @@ opaqueValidatorPrivateKeyJWT, err := httpserver.NewValidatorBuilder(issuerURL, a
 // Configure middleware with exempt paths
 middleware := httpserver.Middleware(
     validator,
+    httpserver.WithAuthorizationPolicy(httpserver.AuthorizationPolicy{
+        RequiredRoles:  []string{"admin"},
+        RequiredScopes: []string{"api.read"},
+        RoleMatchMode:  httpserver.RoleMatchModeAny,
+        ScopeMatchMode: httpserver.ScopeMatchModeAll,
+        RoleClaimPaths: []string{
+            "roles",
+            "realm_access.roles",
+            "resource_access.my-api.roles",
+        },
+        ScopeClaimPaths: []string{"scope", "scp"},
+    }),
     httpserver.WithExemptPaths("/health", "/metrics"),
     httpserver.WithExemptPathPrefixes("/public/", "/static/"),
+    httpserver.WithForbiddenHandler(func(w http.ResponseWriter, r *http.Request, err error) {
+        http.Error(w, err.Error(), http.StatusForbidden) // default is already 403
+    }),
     httpserver.WithMiddlewareLogger(log.Default()),
 )
 
@@ -473,6 +536,62 @@ func protectedHandler(w http.ResponseWriter, r *http.Request) {
     }
 
     // ... your business logic ...
+}
+```
+
+## Authorization Policy Examples (Provider-Agnostic)
+
+`go-authx` does not hardcode provider profiles. You configure claim paths per provider (or tenant) yourself.
+
+```go
+import "github.com/AmmannChristian/go-authx/authz"
+
+// ZITADEL (roles as object keys)
+zitadelPolicy := authz.AuthorizationPolicy{
+    RequiredRoles: []string{"sales-admin"},
+    RoleClaimPaths: []string{
+        "urn:zitadel:iam:org:project:roles",
+        "urn:zitadel:iam:org:project:123456789:roles",
+    },
+    RequiredScopes: []string{"api.read"},
+}
+
+// Keycloak
+keycloakPolicy := authz.AuthorizationPolicy{
+    RequiredRoles: []string{"my-role"},
+    RoleClaimPaths: []string{
+        "realm_access.roles",
+        "resource_access.my-client.roles",
+    },
+    RequiredScopes: []string{"api.read"},
+    ScopeClaimPaths: []string{"scope"},
+}
+
+// Auth0
+auth0Policy := authz.AuthorizationPolicy{
+    RequiredRoles: []string{"admin"},
+    RoleClaimPaths: []string{
+        "https://example.com/roles",
+        "permissions",
+    },
+    RequiredScopes: []string{"read:users"},
+    ScopeClaimPaths: []string{"scope", "permissions"},
+}
+```
+
+### Env Mapping (Consumer Layer)
+
+Environment-variable mapping belongs to the consuming service, not `go-authx`.
+
+```go
+rolePaths := strings.Split(os.Getenv("AUTHZ_ROLE_CLAIM_PATHS"), ",")
+scopePaths := strings.Split(os.Getenv("AUTHZ_SCOPE_CLAIM_PATHS"), ",")
+
+policy := authz.AuthorizationPolicy{
+    RequiredRoles:  strings.Split(os.Getenv("AUTHZ_REQUIRED_ROLES"), ","),
+    RequiredScopes: strings.Split(os.Getenv("AUTHZ_REQUIRED_SCOPES"), ","),
+    RoleClaimPaths: rolePaths,
+    ScopeClaimPaths: scopePaths,
 }
 ```
 
@@ -529,6 +648,8 @@ Check the `examples/` directory for complete working examples:
 
 ```
 go-authx/
+├── authz/                 # Provider-agnostic authorization policy engine
+│   └── policy.go          # Claim extraction + role/scope policy evaluation
 ├── oauth2client/          # Core OAuth2 token management
 │   └── token_manager.go   # TokenManager for client credentials flow
 ├── grpcclient/            # gRPC client utilities
@@ -555,11 +676,12 @@ go-authx/
 
 ## Key Design Principles
 
-1. **Separation of Concerns**: Core token management (`oauth2client`) is independent of transport layer (gRPC/HTTP)
+1. **Separation of Concerns**: AuthN (`oauth2client`, validators) and authorization (`authz`) are cleanly separated from transport layers
 2. **Reusability**: Single `TokenManager` can be shared across multiple clients and protocols
 3. **Builder Pattern**: Fluent API for easy configuration without complex constructors
 4. **Secure Defaults**: TLS enabled by default with system root CAs
 5. **Context Awareness**: Token fetches use detached contexts to prevent premature cancellation
+6. **Provider-Agnostic Authorization**: Claim paths and policies are configurable by consumers (including env-based mapping)
 
 ## Contributing
 
