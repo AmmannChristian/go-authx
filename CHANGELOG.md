@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-02-12
+
+### Added
+- Support for OAuth2 introspection client authentication via RFC 7523 `private_key_jwt`
+- New explicit introspection auth configuration type: `IntrospectionClientAuthConfig`
+- New auth method and algorithm constants for server APIs (`client_secret_basic`, `private_key_jwt`, `RS256`, `ES256`)
+- New builder option for HTTP and gRPC server validators: `WithOpaqueTokenIntrospectionAuth(...)`
+- Support for introspection private key sources as PEM, JWK, and Zitadel key JSON envelope
+- Comprehensive unit tests for private key JWT request fields, signed assertion claims, signing algorithms, and error handling
+
+### Changed
+- `WithOpaqueTokenIntrospection(...)` remains backward-compatible and defaults to `client_secret_basic`
+- Introspection request generation now supports method-specific behavior (Basic Auth vs `client_assertion`)
+- README and package docs expanded with JWT vs opaque token guidance and configuration examples for both auth methods
+
+### Security
+- `private_key_jwt` assertions now include short-lived `exp` (<= 60s) and unique per-request `jti`
+- Validation strengthened for introspection client auth input (required fields, key parsing, algorithm/key compatibility)
+- Sensitive configuration values are not logged
+
+## [1.0.1] - 2026-02-11
+
+### Changed
+- Normalized introspection endpoint handling in `OpaqueTokenValidator`
+- Added dedicated tests for introspection URL normalization and validation
+
+### Security
+- Enforced strict introspection URL requirements: absolute HTTPS URL, no userinfo/query/fragment
+- Blocked local/private/link-local/multicast/unspecified IP targets for introspection requests
+
 ## [1.0.0] - 2026-02-11
 
 ### Added
@@ -82,7 +112,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for OAuth2 scopes
 - Context isolation for token claims
 
-[Unreleased]: https://github.com/AmmannChristian/go-authx/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/AmmannChristian/go-authx/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/AmmannChristian/go-authx/compare/v1.0.1...v1.1.0
+[1.0.1]: https://github.com/AmmannChristian/go-authx/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/AmmannChristian/go-authx/compare/v0.1.3...v1.0.0
 [0.1.3]: https://github.com/AmmannChristian/go-authx/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/AmmannChristian/go-authx/compare/v0.1.1...v0.1.2
