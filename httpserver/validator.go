@@ -47,12 +47,31 @@ func NewOpaqueTokenValidator(
 	httpClient *http.Client,
 	logger Logger,
 ) (*OpaqueTokenValidator, error) {
-	return validator.NewOpaqueTokenValidator(
+	return NewOpaqueTokenValidatorWithAuth(
 		introspectionURL,
 		issuer,
 		audience,
-		clientID,
-		clientSecret,
+		newIntrospectionClientSecretBasicAuthConfig(clientID, clientSecret),
+		httpClient,
+		logger,
+	)
+}
+
+// NewOpaqueTokenValidatorWithAuth creates a new opaque token validator for HTTP servers
+// using explicit introspection client authentication settings.
+func NewOpaqueTokenValidatorWithAuth(
+	introspectionURL,
+	issuer,
+	audience string,
+	authConfig IntrospectionClientAuthConfig,
+	httpClient *http.Client,
+	logger Logger,
+) (*OpaqueTokenValidator, error) {
+	return validator.NewOpaqueTokenValidatorWithAuth(
+		introspectionURL,
+		issuer,
+		audience,
+		authConfig,
 		httpClient,
 		logger,
 	)

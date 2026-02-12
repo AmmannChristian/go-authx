@@ -22,6 +22,7 @@ Reusable Go library for OAuth2/OIDC authentication with support for both **clien
 ### Server-Side Authentication
 - **JWT Token Validation**: Validates OAuth2/OIDC Bearer tokens with JWKS
 - **Opaque Token Validation**: Supports RFC 7662 token introspection for opaque access tokens
+- **Introspection Client Auth**: Supports `client_secret_basic` (default) and `private_key_jwt` (RFC 7523)
 - **gRPC Server Interceptors**: Automatic token validation for incoming requests
 - **Claims Extraction**: Access user identity, scopes, and custom claims in handlers
 - **Method Exemption**: Exempt specific endpoints (e.g., health checks) from authentication
@@ -31,6 +32,14 @@ Reusable Go library for OAuth2/OIDC authentication with support for both **clien
 - **Thread-Safe**: Concurrent reads and writes with double-checked locking
 - **TLS/mTLS**: Secure-by-default (TLS 1.2+, system root CAs) with optional custom CA and client certs
 - **Provider-Agnostic**: Works with any OAuth2/OIDC provider (tested with Zitadel)
+
+## JWT vs Opaque Access Tokens
+
+- **JWT access tokens** are self-contained and validated locally via signature checks against JWKS.
+- **Opaque access tokens** are not locally verifiable and must be checked via token introspection (RFC 7662) on every validation.
+- When using opaque token introspection, this library supports two client authentication methods from your service to the IdP:
+  - `client_secret_basic` (default, backward-compatible)
+  - `private_key_jwt` (RFC 7523)
 
 ## Packages
 
@@ -260,6 +269,20 @@ opaqueValidator, err := grpcserver.NewValidatorBuilder(issuerURL, audience).
     ).
     Build()
 
+// Or use private_key_jwt (RFC 7523) for introspection endpoint authentication
+opaqueValidatorPrivateKeyJWT, err := grpcserver.NewValidatorBuilder(issuerURL, audience).
+    WithOpaqueTokenIntrospectionAuth(
+        "https://auth.example.com/oauth2/introspect",
+        grpcserver.IntrospectionClientAuthConfig{
+            Method:                 grpcserver.IntrospectionClientAuthMethodPrivateKeyJWT,
+            ClientID:               "introspection-client-id",
+            PrivateKey:             string(privateKeyPEM), // PEM, JWK, or Zitadel key JSON
+            PrivateKeyJWTKeyID:     "my-key-id",           // optional
+            PrivateKeyJWTAlgorithm: grpcserver.IntrospectionPrivateKeyJWTAlgorithmRS256, // optional
+        },
+    ).
+    Build()
+
 // Configure interceptor with exempt methods
 interceptor := grpcserver.UnaryServerInterceptor(
     validator,
@@ -399,6 +422,20 @@ opaqueValidator, err := httpserver.NewValidatorBuilder(issuerURL, audience).
         "https://auth.example.com/oauth2/introspect",
         "introspection-client-id",
         "introspection-client-secret",
+    ).
+    Build()
+
+// Or use private_key_jwt (RFC 7523) for introspection endpoint authentication
+opaqueValidatorPrivateKeyJWT, err := httpserver.NewValidatorBuilder(issuerURL, audience).
+    WithOpaqueTokenIntrospectionAuth(
+        "https://auth.example.com/oauth2/introspect",
+        httpserver.IntrospectionClientAuthConfig{
+            Method:                 httpserver.IntrospectionClientAuthMethodPrivateKeyJWT,
+            ClientID:               "introspection-client-id",
+            PrivateKey:             string(privateKeyPEM), // PEM, JWK, or Zitadel key JSON
+            PrivateKeyJWTKeyID:     "my-key-id",           // optional
+            PrivateKeyJWTAlgorithm: httpserver.IntrospectionPrivateKeyJWTAlgorithmRS256, // optional
+        },
     ).
     Build()
 

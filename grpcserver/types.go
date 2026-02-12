@@ -18,6 +18,26 @@ type JWTTokenValidator = validator.JWTTokenValidator
 // This is an alias for the shared validator.OpaqueTokenValidator type.
 type OpaqueTokenValidator = validator.OpaqueTokenValidator
 
+// IntrospectionClientAuthMethod defines how the service authenticates to the introspection endpoint.
+type IntrospectionClientAuthMethod = validator.IntrospectionClientAuthMethod
+
+const (
+	// IntrospectionClientAuthMethodClientSecretBasic authenticates introspection calls with HTTP Basic auth.
+	IntrospectionClientAuthMethodClientSecretBasic = validator.IntrospectionClientAuthMethodClientSecretBasic
+	// IntrospectionClientAuthMethodPrivateKeyJWT authenticates introspection calls with RFC 7523 private_key_jwt.
+	IntrospectionClientAuthMethodPrivateKeyJWT = validator.IntrospectionClientAuthMethodPrivateKeyJWT
+)
+
+const (
+	// IntrospectionPrivateKeyJWTAlgorithmRS256 signs the client assertion with RS256.
+	IntrospectionPrivateKeyJWTAlgorithmRS256 = validator.IntrospectionPrivateKeyJWTAlgorithmRS256
+	// IntrospectionPrivateKeyJWTAlgorithmES256 signs the client assertion with ES256.
+	IntrospectionPrivateKeyJWTAlgorithmES256 = validator.IntrospectionPrivateKeyJWTAlgorithmES256
+)
+
+// IntrospectionClientAuthConfig configures client authentication for introspection requests.
+type IntrospectionClientAuthConfig = validator.IntrospectionClientAuthConfig
+
 // Logger is an interface for optional logging in JWTTokenValidator.
 // This is an alias for the shared validator.Logger interface.
 type Logger = validator.Logger

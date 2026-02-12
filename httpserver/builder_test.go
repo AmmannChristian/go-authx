@@ -2,9 +2,14 @@ package httpserver
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -92,11 +97,32 @@ func TestValidatorBuilder_WithOpaqueTokenIntrospection(t *testing.T) {
 	if builder.introspectionURL != "https://auth.example.com/oauth2/introspect" {
 		t.Errorf("unexpected introspection URL: %s", builder.introspectionURL)
 	}
-	if builder.clientID != "client-id" {
-		t.Errorf("unexpected client ID: %s", builder.clientID)
+	if builder.introspectionAuthConfig.Method != IntrospectionClientAuthMethodClientSecretBasic {
+		t.Errorf("unexpected introspection method: %s", builder.introspectionAuthConfig.Method)
 	}
-	if builder.clientSecret != "client-secret" {
-		t.Errorf("unexpected client secret: %s", builder.clientSecret)
+	if builder.introspectionAuthConfig.ClientID != "client-id" {
+		t.Errorf("unexpected client ID: %s", builder.introspectionAuthConfig.ClientID)
+	}
+	if builder.introspectionAuthConfig.ClientSecret != "client-secret" {
+		t.Errorf("unexpected client secret: %s", builder.introspectionAuthConfig.ClientSecret)
+	}
+}
+
+func TestValidatorBuilder_WithOpaqueTokenIntrospectionAuth(t *testing.T) {
+	builder := NewValidatorBuilder("https://auth.example.com", "my-api")
+
+	authConfig := IntrospectionClientAuthConfig{
+		Method:                 IntrospectionClientAuthMethodPrivateKeyJWT,
+		ClientID:               "client-id",
+		PrivateKey:             "private-key",
+		PrivateKeyJWTKeyID:     "kid-1",
+		PrivateKeyJWTAlgorithm: IntrospectionPrivateKeyJWTAlgorithmRS256,
+	}
+
+	builder.WithOpaqueTokenIntrospectionAuth("https://auth.example.com/oauth2/introspect", authConfig)
+
+	if builder.introspectionAuthConfig != authConfig {
+		t.Fatalf("unexpected introspection auth config: %+v", builder.introspectionAuthConfig)
 	}
 }
 
@@ -331,6 +357,71 @@ func TestValidatorBuilder_Build_OpaqueTokenValidator_MissingConfig(t *testing.T)
 	}
 }
 
+func TestValidatorBuilder_Build_OpaqueTokenValidator_PrivateKeyJWT(t *testing.T) {
+	privateKeyPEM := mustGeneratePrivateKeyPEM(t)
+
+	client := &http.Client{
+		Transport: testutil.RoundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if authHeader := r.Header.Get("Authorization"); authHeader != "" {
+				return nil, fmt.Errorf("expected no authorization header, got %q", authHeader)
+			}
+
+			bodyBytes, err := io.ReadAll(r.Body)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read request body: %w", err)
+			}
+			values, err := url.ParseQuery(string(bodyBytes))
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse body: %w", err)
+			}
+			if values.Get("token") != "opaque-token" {
+				return nil, fmt.Errorf("unexpected token value %q", values.Get("token"))
+			}
+			if values.Get("token_type_hint") != "access_token" {
+				return nil, fmt.Errorf("unexpected token_type_hint %q", values.Get("token_type_hint"))
+			}
+			if values.Get("client_assertion_type") != "urn:ietf:params:oauth:client-assertion-type:jwt-bearer" {
+				return nil, fmt.Errorf("unexpected assertion type %q", values.Get("client_assertion_type"))
+			}
+			if values.Get("client_assertion") == "" {
+				return nil, fmt.Errorf("missing client_assertion")
+			}
+
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body: io.NopCloser(strings.NewReader(`{
+					"active": true,
+					"iss": "https://auth.example.com",
+					"aud": ["my-api"],
+					"sub": "user-123"
+				}`)),
+				Request: r,
+			}, nil
+		}),
+	}
+
+	validator, err := NewValidatorBuilder("https://auth.example.com", "my-api").
+		WithOpaqueTokenIntrospectionAuth(
+			"https://auth.example.com/oauth2/introspect",
+			IntrospectionClientAuthConfig{
+				Method:             IntrospectionClientAuthMethodPrivateKeyJWT,
+				ClientID:           "client-id",
+				PrivateKey:         privateKeyPEM,
+				PrivateKeyJWTKeyID: "kid-1",
+			},
+		).
+		WithHTTPClient(client).
+		Build()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := validator.ValidateToken(context.Background(), "opaque-token"); err != nil {
+		t.Fatalf("validator should validate opaque token response: %v", err)
+	}
+}
+
 // mockLogger is a simple logger implementation for testing
 type mockLogger struct {
 	mu       sync.Mutex
@@ -350,4 +441,23 @@ func (m *mockLogger) getMessages() []string {
 	msgs := make([]string, len(m.messages))
 	copy(msgs, m.messages)
 	return msgs
+}
+
+func mustGeneratePrivateKeyPEM(tb testing.TB) string {
+	tb.Helper()
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		tb.Fatalf("failed to generate rsa key: %v", err)
+	}
+
+	privateKeyDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		tb.Fatalf("failed to marshal private key: %v", err)
+	}
+
+	return string(pem.EncodeToMemory(&pem.Block{
+		Type:  "PRIVATE KEY",
+		Bytes: privateKeyDER,
+	}))
 }

@@ -47,12 +47,43 @@ func NewOpaqueTokenValidator(
 	httpClient *http.Client,
 	logger Logger,
 ) (*OpaqueTokenValidator, error) {
-	return validator.NewOpaqueTokenValidator(
+	return NewOpaqueTokenValidatorWithAuth(
 		introspectionURL,
 		issuer,
 		audience,
-		clientID,
-		clientSecret,
+		newIntrospectionClientSecretBasicAuthConfig(clientID, clientSecret),
+		httpClient,
+		logger,
+	)
+}
+
+// NewOpaqueTokenValidatorWithAuth creates a new opaque token validator for gRPC servers
+// using explicit introspection client authentication settings.
+//
+// Parameters:
+//   - introspectionURL: OAuth2 introspection endpoint URL
+//   - issuer: Expected token issuer
+//   - audience: Expected token audience
+//   - authConfig: Introspection client authentication configuration
+//   - httpClient: HTTP client for introspection requests (optional, uses http.DefaultClient if nil)
+//   - logger: Optional logger for debugging (can be nil)
+//
+// Returns:
+//   - *OpaqueTokenValidator: Configured validator instance
+//   - error: Error if validator initialization fails
+func NewOpaqueTokenValidatorWithAuth(
+	introspectionURL,
+	issuer,
+	audience string,
+	authConfig IntrospectionClientAuthConfig,
+	httpClient *http.Client,
+	logger Logger,
+) (*OpaqueTokenValidator, error) {
+	return validator.NewOpaqueTokenValidatorWithAuth(
+		introspectionURL,
+		issuer,
+		audience,
+		authConfig,
 		httpClient,
 		logger,
 	)

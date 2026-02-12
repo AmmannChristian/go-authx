@@ -77,6 +77,21 @@
 //	    ).
 //	    Build()
 //
+// You can also use RFC 7523 private_key_jwt for introspection endpoint authentication:
+//
+//	validator, err := grpcserver.NewValidatorBuilder(issuerURL, audience).
+//	    WithOpaqueTokenIntrospectionAuth(
+//	        "https://auth.example.com/oauth2/introspect",
+//	        grpcserver.IntrospectionClientAuthConfig{
+//	            Method:                 grpcserver.IntrospectionClientAuthMethodPrivateKeyJWT,
+//	            ClientID:               "introspection-client-id",
+//	            PrivateKey:             string(privateKeyPEM), // PEM, JWK, or Zitadel key JSON
+//	            PrivateKeyJWTKeyID:     "my-key-id",           // optional
+//	            PrivateKeyJWTAlgorithm: grpcserver.IntrospectionPrivateKeyJWTAlgorithmRS256, // optional
+//	        },
+//	    ).
+//	    Build()
+//
 // # Security Considerations
 //
 //   - Tokens are validated against JWKS from the OIDC provider

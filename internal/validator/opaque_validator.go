@@ -2,10 +2,18 @@ package validator
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -16,13 +24,51 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+const (
+	introspectionTokenTypeHintAccessToken = "access_token"
+	// #nosec G101 -- OAuth2/RFC7523 assertion-type URI constant, not a credential.
+	introspectionClientAssertionTypeJWTBearer = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+	privateKeyJWTAssertionLifetime            = time.Minute
+)
+
+// IntrospectionClientAuthMethod defines the OAuth2 client authentication method
+// used when calling the introspection endpoint.
+type IntrospectionClientAuthMethod string
+
+const (
+	// IntrospectionClientAuthMethodClientSecretBasic uses RFC 6749 client_secret_basic authentication.
+	IntrospectionClientAuthMethodClientSecretBasic IntrospectionClientAuthMethod = "client_secret_basic"
+	// IntrospectionClientAuthMethodPrivateKeyJWT uses RFC 7523 private_key_jwt authentication.
+	IntrospectionClientAuthMethodPrivateKeyJWT IntrospectionClientAuthMethod = "private_key_jwt"
+)
+
+const (
+	// IntrospectionPrivateKeyJWTAlgorithmRS256 signs private_key_jwt assertions using RSASSA-PKCS1-v1_5 + SHA-256.
+	IntrospectionPrivateKeyJWTAlgorithmRS256 = "RS256"
+	// IntrospectionPrivateKeyJWTAlgorithmES256 signs private_key_jwt assertions using ECDSA P-256 + SHA-256.
+	IntrospectionPrivateKeyJWTAlgorithmES256 = "ES256"
+)
+
+// IntrospectionClientAuthConfig configures client authentication for the
+// introspection request.
+type IntrospectionClientAuthConfig struct {
+	Method   IntrospectionClientAuthMethod
+	ClientID string
+	// #nosec G117 -- Public API field name is intentional for OAuth client_secret config.
+	ClientSecret string
+	// #nosec G117 -- Public API field name is intentional for private_key_jwt config.
+	PrivateKey             string
+	PrivateKeyJWTKeyID     string
+	PrivateKeyJWTAlgorithm string
+}
+
 // OpaqueTokenValidator validates OAuth2 opaque tokens via RFC 7662 token introspection.
 type OpaqueTokenValidator struct {
 	introspectionURL string
 	issuer           string
 	audience         string
-	clientID         string
-	clientSecret     string
+	authConfig       IntrospectionClientAuthConfig
+	privateKey       any
 	httpClient       *http.Client
 	logger           Logger
 }
@@ -46,6 +92,31 @@ func NewOpaqueTokenValidator(
 	httpClient *http.Client,
 	logger Logger,
 ) (*OpaqueTokenValidator, error) {
+	return NewOpaqueTokenValidatorWithAuth(
+		introspectionURL,
+		issuer,
+		audience,
+		IntrospectionClientAuthConfig{
+			Method:       IntrospectionClientAuthMethodClientSecretBasic,
+			ClientID:     clientID,
+			ClientSecret: clientSecret,
+		},
+		httpClient,
+		logger,
+	)
+}
+
+// NewOpaqueTokenValidatorWithAuth creates a validator that uses token introspection for
+// opaque tokens and supports multiple OAuth2 client authentication methods for the
+// introspection call.
+func NewOpaqueTokenValidatorWithAuth(
+	introspectionURL,
+	issuer,
+	audience string,
+	authConfig IntrospectionClientAuthConfig,
+	httpClient *http.Client,
+	logger Logger,
+) (*OpaqueTokenValidator, error) {
 	if introspectionURL == "" {
 		return nil, errors.New("validator: introspection URL is required")
 	}
@@ -55,14 +126,13 @@ func NewOpaqueTokenValidator(
 	if audience == "" {
 		return nil, errors.New("validator: audience is required")
 	}
-	if clientID == "" {
-		return nil, errors.New("validator: introspection client ID is required")
-	}
-	if clientSecret == "" {
-		return nil, errors.New("validator: introspection client secret is required")
-	}
 
 	normalizedIntrospectionURL, err := normalizeIntrospectionURL(introspectionURL)
+	if err != nil {
+		return nil, err
+	}
+
+	normalizedAuthConfig, privateKey, err := normalizeIntrospectionClientAuthConfig(authConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -75,8 +145,8 @@ func NewOpaqueTokenValidator(
 		introspectionURL: normalizedIntrospectionURL,
 		issuer:           issuer,
 		audience:         audience,
-		clientID:         clientID,
-		clientSecret:     clientSecret,
+		authConfig:       normalizedAuthConfig,
+		privateKey:       privateKey,
 		httpClient:       httpClient,
 		logger:           logger,
 	}, nil
@@ -119,6 +189,7 @@ func (v *OpaqueTokenValidator) introspect(ctx context.Context, tokenString strin
 		return nil, err
 	}
 
+	// #nosec G704 -- URL is normalized and restricted by normalizeIntrospectionURL.
 	resp, err := v.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("validator: introspection request failed: %w", err)
@@ -149,7 +220,21 @@ func (v *OpaqueTokenValidator) introspect(ctx context.Context, tokenString strin
 func (v *OpaqueTokenValidator) newIntrospectionRequest(ctx context.Context, tokenString string) (*http.Request, error) {
 	values := url.Values{}
 	values.Set("token", tokenString)
-	values.Set("token_type_hint", "access_token")
+	values.Set("token_type_hint", introspectionTokenTypeHintAccessToken)
+
+	switch v.authConfig.Method {
+	case IntrospectionClientAuthMethodClientSecretBasic:
+		// Basic auth is set below to keep body handling shared.
+	case IntrospectionClientAuthMethodPrivateKeyJWT:
+		assertion, err := v.buildPrivateKeyJWTClientAssertion()
+		if err != nil {
+			return nil, err
+		}
+		values.Set("client_assertion_type", introspectionClientAssertionTypeJWTBearer)
+		values.Set("client_assertion", assertion)
+	default:
+		return nil, fmt.Errorf("validator: unsupported introspection client auth method %q", v.authConfig.Method)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, v.introspectionURL, strings.NewReader(values.Encode()))
 	if err != nil {
@@ -158,9 +243,427 @@ func (v *OpaqueTokenValidator) newIntrospectionRequest(ctx context.Context, toke
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	req.SetBasicAuth(v.clientID, v.clientSecret)
+
+	if v.authConfig.Method == IntrospectionClientAuthMethodClientSecretBasic {
+		req.SetBasicAuth(v.authConfig.ClientID, v.authConfig.ClientSecret)
+	}
 
 	return req, nil
+}
+
+func (v *OpaqueTokenValidator) buildPrivateKeyJWTClientAssertion() (string, error) {
+	jti, err := newIntrospectionJWTID()
+	if err != nil {
+		return "", err
+	}
+
+	now := time.Now().UTC()
+	expiresAt := now.Add(privateKeyJWTAssertionLifetime)
+	claims := jwt.RegisteredClaims{
+		Issuer:    v.authConfig.ClientID,
+		Subject:   v.authConfig.ClientID,
+		Audience:  jwt.ClaimStrings{v.introspectionURL},
+		IssuedAt:  jwt.NewNumericDate(now),
+		ExpiresAt: jwt.NewNumericDate(expiresAt),
+		ID:        jti,
+	}
+
+	signingMethod := jwt.GetSigningMethod(v.authConfig.PrivateKeyJWTAlgorithm)
+	if signingMethod == nil {
+		return "", fmt.Errorf("validator: unsupported introspection private_key_jwt algorithm %q", v.authConfig.PrivateKeyJWTAlgorithm)
+	}
+
+	token := jwt.NewWithClaims(signingMethod, claims)
+	if v.authConfig.PrivateKeyJWTKeyID != "" {
+		token.Header["kid"] = v.authConfig.PrivateKeyJWTKeyID
+	}
+
+	assertion, err := token.SignedString(v.privateKey)
+	if err != nil {
+		return "", fmt.Errorf("validator: failed to sign introspection client assertion: %w", err)
+	}
+
+	return assertion, nil
+}
+
+func normalizeIntrospectionClientAuthConfig(authConfig IntrospectionClientAuthConfig) (IntrospectionClientAuthConfig, any, error) {
+	normalized := authConfig
+	normalized.Method = normalizeIntrospectionClientAuthMethod(normalized.Method)
+	normalized.ClientID = strings.TrimSpace(normalized.ClientID)
+	normalized.ClientSecret = strings.TrimSpace(normalized.ClientSecret)
+	normalized.PrivateKey = strings.TrimSpace(normalized.PrivateKey)
+	normalized.PrivateKeyJWTKeyID = strings.TrimSpace(normalized.PrivateKeyJWTKeyID)
+	normalized.PrivateKeyJWTAlgorithm = strings.TrimSpace(normalized.PrivateKeyJWTAlgorithm)
+
+	switch normalized.Method {
+	case IntrospectionClientAuthMethodClientSecretBasic:
+		if normalized.ClientID == "" {
+			return IntrospectionClientAuthConfig{}, nil, errors.New("validator: introspection client ID is required")
+		}
+		if normalized.ClientSecret == "" {
+			return IntrospectionClientAuthConfig{}, nil, errors.New("validator: introspection client secret is required")
+		}
+		return normalized, nil, nil
+	case IntrospectionClientAuthMethodPrivateKeyJWT:
+		if normalized.PrivateKey == "" {
+			return IntrospectionClientAuthConfig{}, nil, errors.New("validator: introspection private key is required")
+		}
+
+		privateKey, inferredKeyID, inferredAlgorithm, inferredClientID, err := parseIntrospectionPrivateKey(normalized.PrivateKey)
+		if err != nil {
+			return IntrospectionClientAuthConfig{}, nil, err
+		}
+
+		if normalized.ClientID == "" {
+			normalized.ClientID = strings.TrimSpace(inferredClientID)
+		}
+		if normalized.ClientID == "" {
+			return IntrospectionClientAuthConfig{}, nil, errors.New("validator: introspection client ID is required")
+		}
+
+		if normalized.PrivateKeyJWTAlgorithm == "" {
+			normalized.PrivateKeyJWTAlgorithm = strings.TrimSpace(inferredAlgorithm)
+		}
+		if normalized.PrivateKeyJWTAlgorithm == "" {
+			normalized.PrivateKeyJWTAlgorithm, err = inferPrivateKeyJWTAlgorithm(privateKey)
+			if err != nil {
+				return IntrospectionClientAuthConfig{}, nil, err
+			}
+		}
+
+		if err := validatePrivateKeyJWTAlgorithm(normalized.PrivateKeyJWTAlgorithm, privateKey); err != nil {
+			return IntrospectionClientAuthConfig{}, nil, err
+		}
+
+		if normalized.PrivateKeyJWTKeyID == "" {
+			normalized.PrivateKeyJWTKeyID = strings.TrimSpace(inferredKeyID)
+		}
+
+		// Keep the parsed key only and avoid retaining the raw private key content.
+		normalized.PrivateKey = ""
+
+		return normalized, privateKey, nil
+	default:
+		return IntrospectionClientAuthConfig{}, nil, fmt.Errorf("validator: unsupported introspection client auth method %q", normalized.Method)
+	}
+}
+
+func normalizeIntrospectionClientAuthMethod(method IntrospectionClientAuthMethod) IntrospectionClientAuthMethod {
+	normalizedMethod := IntrospectionClientAuthMethod(strings.TrimSpace(string(method)))
+	if normalizedMethod == "" {
+		return IntrospectionClientAuthMethodClientSecretBasic
+	}
+
+	return normalizedMethod
+}
+
+func inferPrivateKeyJWTAlgorithm(privateKey any) (string, error) {
+	switch privateKey.(type) {
+	case *rsa.PrivateKey:
+		return IntrospectionPrivateKeyJWTAlgorithmRS256, nil
+	case *ecdsa.PrivateKey:
+		return IntrospectionPrivateKeyJWTAlgorithmES256, nil
+	default:
+		return "", fmt.Errorf("validator: unsupported introspection private key type %T", privateKey)
+	}
+}
+
+func validatePrivateKeyJWTAlgorithm(algorithm string, privateKey any) error {
+	switch algorithm {
+	case IntrospectionPrivateKeyJWTAlgorithmRS256:
+		if _, ok := privateKey.(*rsa.PrivateKey); !ok {
+			return errors.New("validator: private_key_jwt algorithm RS256 requires an RSA private key")
+		}
+		return nil
+	case IntrospectionPrivateKeyJWTAlgorithmES256:
+		ecdsaKey, ok := privateKey.(*ecdsa.PrivateKey)
+		if !ok {
+			return errors.New("validator: private_key_jwt algorithm ES256 requires an EC private key")
+		}
+		if ecdsaKey.Curve != elliptic.P256() {
+			return errors.New("validator: private_key_jwt algorithm ES256 requires an EC P-256 private key")
+		}
+		return nil
+	default:
+		return fmt.Errorf("validator: unsupported introspection private_key_jwt algorithm %q", algorithm)
+	}
+}
+
+func parseIntrospectionPrivateKey(rawPrivateKey string) (any, string, string, string, error) {
+	trimmedKey := strings.TrimSpace(rawPrivateKey)
+	if trimmedKey == "" {
+		return nil, "", "", "", errors.New("validator: introspection private key is required")
+	}
+
+	if strings.HasPrefix(trimmedKey, "{") {
+		privateKey, keyID, algorithm, clientID, err := parseIntrospectionPrivateKeyJSON(trimmedKey)
+		if err != nil {
+			return nil, "", "", "", err
+		}
+		return privateKey, keyID, algorithm, clientID, nil
+	}
+
+	privateKey, err := parsePrivateKeyPEM(trimmedKey)
+	if err != nil {
+		return nil, "", "", "", err
+	}
+
+	return privateKey, "", "", "", nil
+}
+
+func parseIntrospectionPrivateKeyJSON(rawJSON string) (any, string, string, string, error) {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(rawJSON), &envelope); err != nil {
+		return nil, "", "", "", fmt.Errorf("validator: invalid introspection private key JSON: %w", err)
+	}
+
+	if _, isJWK := envelope["kty"]; isJWK {
+		privateKey, keyID, algorithm, err := parsePrivateKeyJWK(rawJSON)
+		if err != nil {
+			return nil, "", "", "", err
+		}
+		return privateKey, keyID, algorithm, "", nil
+	}
+
+	if _, isZitadelKey := envelope["key"]; isZitadelKey {
+		privateKey, keyID, clientID, err := parseZitadelPrivateKeyEnvelope(rawJSON)
+		if err != nil {
+			return nil, "", "", "", err
+		}
+		return privateKey, keyID, "", clientID, nil
+	}
+
+	return nil, "", "", "", errors.New("validator: invalid introspection private key JSON: expected JWK or Zitadel key JSON")
+}
+
+type zitadelPrivateKeyEnvelope struct {
+	KeyID    string `json:"keyId"`
+	Key      string `json:"key"`
+	ClientID string `json:"clientId"`
+}
+
+func parseZitadelPrivateKeyEnvelope(rawJSON string) (any, string, string, error) {
+	var envelope zitadelPrivateKeyEnvelope
+	if err := json.Unmarshal([]byte(rawJSON), &envelope); err != nil {
+		return nil, "", "", fmt.Errorf("validator: invalid Zitadel key JSON: %w", err)
+	}
+
+	privateKeyPEM := strings.TrimSpace(envelope.Key)
+	if privateKeyPEM == "" {
+		return nil, "", "", errors.New("validator: invalid Zitadel key JSON: key is required")
+	}
+
+	privateKey, err := parsePrivateKeyPEM(privateKeyPEM)
+	if err != nil {
+		return nil, "", "", err
+	}
+
+	return privateKey, strings.TrimSpace(envelope.KeyID), strings.TrimSpace(envelope.ClientID), nil
+}
+
+func parsePrivateKeyPEM(rawPEM string) (any, error) {
+	pemBytes := []byte(rawPEM)
+
+	rsaKey, rsaErr := jwt.ParseRSAPrivateKeyFromPEM(pemBytes)
+	if rsaErr == nil {
+		return rsaKey, nil
+	}
+
+	ecdsaKey, ecdsaErr := jwt.ParseECPrivateKeyFromPEM(pemBytes)
+	if ecdsaErr == nil {
+		return ecdsaKey, nil
+	}
+
+	block, _ := pem.Decode(pemBytes)
+	if block == nil {
+		return nil, errors.New("validator: invalid introspection private key: expected PEM or JWK")
+	}
+
+	parsedKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("validator: invalid introspection private key: %w", err)
+	}
+
+	switch key := parsedKey.(type) {
+	case *rsa.PrivateKey:
+		return key, nil
+	case *ecdsa.PrivateKey:
+		return key, nil
+	default:
+		return nil, fmt.Errorf("validator: unsupported introspection private key type %T", parsedKey)
+	}
+}
+
+type privateKeyJWK struct {
+	KTY string `json:"kty"`
+	ALG string `json:"alg"`
+	KID string `json:"kid"`
+	N   string `json:"n"`
+	E   string `json:"e"`
+	D   string `json:"d"`
+	P   string `json:"p"`
+	Q   string `json:"q"`
+	CRV string `json:"crv"`
+	X   string `json:"x"`
+	Y   string `json:"y"`
+}
+
+func parsePrivateKeyJWK(rawJWK string) (any, string, string, error) {
+	var jwk privateKeyJWK
+	if err := json.Unmarshal([]byte(rawJWK), &jwk); err != nil {
+		return nil, "", "", fmt.Errorf("validator: invalid introspection private JWK: %w", err)
+	}
+
+	switch strings.ToUpper(strings.TrimSpace(jwk.KTY)) {
+	case "RSA":
+		privateKey, err := parseRSAPrivateKeyJWK(jwk)
+		if err != nil {
+			return nil, "", "", err
+		}
+		return privateKey, strings.TrimSpace(jwk.KID), strings.TrimSpace(jwk.ALG), nil
+	case "EC":
+		privateKey, err := parseECPrivateKeyJWK(jwk)
+		if err != nil {
+			return nil, "", "", err
+		}
+		return privateKey, strings.TrimSpace(jwk.KID), strings.TrimSpace(jwk.ALG), nil
+	default:
+		return nil, "", "", fmt.Errorf("validator: unsupported introspection JWK key type %q", jwk.KTY)
+	}
+}
+
+func parseRSAPrivateKeyJWK(jwk privateKeyJWK) (*rsa.PrivateKey, error) {
+	n, err := decodeJWKBigInt("n", jwk.N)
+	if err != nil {
+		return nil, err
+	}
+
+	eBytes, err := decodeJWKBase64URL("e", jwk.E)
+	if err != nil {
+		return nil, err
+	}
+	eBigInt := new(big.Int).SetBytes(eBytes)
+	if !eBigInt.IsInt64() {
+		return nil, errors.New("validator: invalid e in introspection JWK: exponent is too large")
+	}
+	e := int(eBigInt.Int64())
+	if e < 3 {
+		return nil, errors.New("validator: invalid e in introspection JWK: exponent must be >= 3")
+	}
+
+	d, err := decodeJWKBigInt("d", jwk.D)
+	if err != nil {
+		return nil, err
+	}
+
+	privateKey := &rsa.PrivateKey{
+		PublicKey: rsa.PublicKey{N: n, E: e},
+		D:         d,
+	}
+
+	if jwk.P == "" || jwk.Q == "" {
+		return nil, errors.New("validator: introspection RSA JWK requires p and q")
+	}
+
+	p, pErr := decodeJWKBigInt("p", jwk.P)
+	if pErr != nil {
+		return nil, pErr
+	}
+	q, qErr := decodeJWKBigInt("q", jwk.Q)
+	if qErr != nil {
+		return nil, qErr
+	}
+
+	privateKey.Primes = []*big.Int{p, q}
+	if validateErr := privateKey.Validate(); validateErr != nil {
+		return nil, fmt.Errorf("validator: invalid introspection RSA JWK: %w", validateErr)
+	}
+	privateKey.Precompute()
+
+	return privateKey, nil
+}
+
+func parseECPrivateKeyJWK(jwk privateKeyJWK) (*ecdsa.PrivateKey, error) {
+	if strings.TrimSpace(jwk.CRV) != "P-256" {
+		return nil, fmt.Errorf("validator: unsupported introspection EC JWK curve %q", jwk.CRV)
+	}
+
+	dBytes, err := decodeJWKBase64URL("d", jwk.D)
+	if err != nil {
+		return nil, err
+	}
+
+	curve := elliptic.P256()
+	d := new(big.Int).SetBytes(dBytes)
+	if d.Sign() <= 0 || d.Cmp(curve.Params().N) >= 0 {
+		return nil, errors.New("validator: invalid d in introspection EC JWK")
+	}
+
+	x, y := curve.ScalarBaseMult(dBytes)
+	if x == nil || y == nil {
+		return nil, errors.New("validator: failed to derive public key from introspection EC JWK")
+	}
+
+	if jwk.X != "" || jwk.Y != "" {
+		if jwk.X == "" || jwk.Y == "" {
+			return nil, errors.New("validator: introspection EC JWK requires both x and y when one is provided")
+		}
+
+		expectedX, expectedXErr := decodeJWKBigInt("x", jwk.X)
+		if expectedXErr != nil {
+			return nil, expectedXErr
+		}
+		expectedY, expectedYErr := decodeJWKBigInt("y", jwk.Y)
+		if expectedYErr != nil {
+			return nil, expectedYErr
+		}
+
+		if x.Cmp(expectedX) != 0 || y.Cmp(expectedY) != 0 {
+			return nil, errors.New("validator: introspection EC JWK x/y do not match private key")
+		}
+	}
+
+	return &ecdsa.PrivateKey{
+		PublicKey: ecdsa.PublicKey{Curve: curve, X: x, Y: y},
+		D:         d,
+	}, nil
+}
+
+func decodeJWKBigInt(name, value string) (*big.Int, error) {
+	decoded, err := decodeJWKBase64URL(name, value)
+	if err != nil {
+		return nil, err
+	}
+
+	bigInt := new(big.Int).SetBytes(decoded)
+	if bigInt.Sign() <= 0 {
+		return nil, fmt.Errorf("validator: invalid %s in introspection JWK: value must be > 0", name)
+	}
+
+	return bigInt, nil
+}
+
+func decodeJWKBase64URL(name, value string) ([]byte, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, fmt.Errorf("validator: invalid %s in introspection JWK: empty", name)
+	}
+
+	decoded, err := base64.RawURLEncoding.DecodeString(trimmed)
+	if err != nil {
+		return nil, fmt.Errorf("validator: invalid %s in introspection JWK: %w", name, err)
+	}
+
+	return decoded, nil
+}
+
+func newIntrospectionJWTID() (string, error) {
+	randomBytes := make([]byte, 16)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return "", fmt.Errorf("validator: failed to generate introspection client assertion jti: %w", err)
+	}
+
+	return base64.RawURLEncoding.EncodeToString(randomBytes), nil
 }
 
 func decodeIntrospectionClaims(body []byte) (map[string]interface{}, error) {

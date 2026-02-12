@@ -12,16 +12,15 @@ import (
 // ValidatorBuilder provides a fluent interface for constructing a TokenValidator
 // with OAuth2/OIDC configuration.
 type ValidatorBuilder struct {
-	issuerURL        string
-	audience         string
-	jwksURL          string
-	cacheTTL         time.Duration
-	httpClient       *http.Client
-	logger           Logger
-	useOpaqueToken   bool
-	introspectionURL string
-	clientID         string
-	clientSecret     string
+	issuerURL               string
+	audience                string
+	jwksURL                 string
+	cacheTTL                time.Duration
+	httpClient              *http.Client
+	logger                  Logger
+	useOpaqueToken          bool
+	introspectionURL        string
+	introspectionAuthConfig IntrospectionClientAuthConfig
 }
 
 // NewValidatorBuilder creates a new validator builder with required parameters.
@@ -113,8 +112,29 @@ func (b *ValidatorBuilder) WithLogger(logger Logger) *ValidatorBuilder {
 func (b *ValidatorBuilder) WithOpaqueTokenIntrospection(introspectionURL, clientID, clientSecret string) *ValidatorBuilder {
 	b.useOpaqueToken = true
 	b.introspectionURL = introspectionURL
-	b.clientID = clientID
-	b.clientSecret = clientSecret
+	b.introspectionAuthConfig = newIntrospectionClientSecretBasicAuthConfig(clientID, clientSecret)
+
+	return b
+}
+
+func newIntrospectionClientSecretBasicAuthConfig(clientID, clientSecret string) IntrospectionClientAuthConfig {
+	var authConfig IntrospectionClientAuthConfig
+	authConfig.Method = IntrospectionClientAuthMethodClientSecretBasic
+	authConfig.ClientID = clientID
+	authConfig.ClientSecret = clientSecret
+
+	return authConfig
+}
+
+// WithOpaqueTokenIntrospectionAuth configures the builder to validate opaque tokens
+// via OAuth2 token introspection (RFC 7662) using explicit client authentication settings.
+func (b *ValidatorBuilder) WithOpaqueTokenIntrospectionAuth(
+	introspectionURL string,
+	authConfig IntrospectionClientAuthConfig,
+) *ValidatorBuilder {
+	b.useOpaqueToken = true
+	b.introspectionURL = introspectionURL
+	b.introspectionAuthConfig = authConfig
 
 	return b
 }
@@ -140,12 +160,11 @@ func (b *ValidatorBuilder) Build() (TokenValidator, error) {
 	}
 
 	if b.useOpaqueToken {
-		validator, err := NewOpaqueTokenValidator(
+		validator, err := NewOpaqueTokenValidatorWithAuth(
 			b.introspectionURL,
 			b.issuerURL,
 			b.audience,
-			b.clientID,
-			b.clientSecret,
+			b.introspectionAuthConfig,
 			b.httpClient,
 			b.logger,
 		)
