@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-02-12
+
+### Added
+- Provider-agnostic authorization engine (`authz` package) for role/scope policy evaluation
+- New authorization policy API: `AuthorizationPolicy`, `RoleMatchMode`, `ScopeMatchMode`
+- Support for configurable role/scope claim paths with dot notation (including nested provider claims)
+- Support for claim formats: space-separated `scope` strings, arrays, and object-key role maps (e.g. Zitadel role objects)
+- New gRPC server option: `WithAuthorizationPolicy(...)`
+- New HTTP middleware options: `WithAuthorizationPolicy(...)` and `WithForbiddenHandler(...)`
+- Integration tests for authorization allow/deny flows in both gRPC and HTTP transports
+
+### Changed
+- Authorization is now evaluated after successful authentication in `grpcserver` and `httpserver` when a policy is configured
+- Authorization remains disabled by default when no required roles/scopes are set (no breaking change to existing authN behavior)
+- `TokenClaims` now includes `RawClaims` to enable provider-agnostic authorization evaluation
+- README and package docs expanded with AuthN vs Authorization guidance, gRPC/HTTP examples, and provider-specific claim-path examples (ZITADEL, Keycloak, Auth0)
+
+### Security
+- Authorization denials are consistently mapped to `codes.PermissionDenied` (gRPC) and HTTP `403` (HTTP)
+- Unknown authorization match modes are normalized fail-closed (`all`)
+
 ## [1.1.0] - 2026-02-12
 
 ### Added
@@ -112,7 +133,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for OAuth2 scopes
 - Context isolation for token claims
 
-[Unreleased]: https://github.com/AmmannChristian/go-authx/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/AmmannChristian/go-authx/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/AmmannChristian/go-authx/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/AmmannChristian/go-authx/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/AmmannChristian/go-authx/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/AmmannChristian/go-authx/compare/v0.1.3...v1.0.0
