@@ -202,7 +202,15 @@ func (v *OpaqueTokenValidator) introspect(ctx context.Context, tokenString strin
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("validator: introspection endpoint returned status %d", resp.StatusCode)
+		respText := strings.TrimSpace(string(body))
+		if len(respText) > 512 {
+			respText = respText[:512] + "..."
+		}
+		return nil, fmt.Errorf(
+			"validator: introspection endpoint returned status %d: %s",
+			resp.StatusCode,
+			respText,
+		)
 	}
 
 	introspectionClaims, err := decodeIntrospectionClaims(body)
