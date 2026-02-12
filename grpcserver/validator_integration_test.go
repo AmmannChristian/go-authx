@@ -8,6 +8,8 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -322,6 +324,75 @@ func TestValidateToken_NoEmail(t *testing.T) {
 
 	if tokenClaims.Email != "" {
 		t.Errorf("expected empty email, got %s", tokenClaims.Email)
+	}
+}
+
+func TestNewOpaqueTokenValidator_WrapperIntegration(t *testing.T) {
+	now := time.Now().UTC()
+	client := &http.Client{
+		Transport: testutil.RoundTripFunc(func(r *http.Request) (*http.Response, error) {
+			authHeader := r.Header.Get("Authorization")
+			expectedAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("client-id:client-secret"))
+			if authHeader != expectedAuth {
+				t.Fatalf("unexpected Authorization header: %s", authHeader)
+			}
+
+			bodyBytes, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("failed to read request body: %v", err)
+			}
+			values, err := url.ParseQuery(string(bodyBytes))
+			if err != nil {
+				t.Fatalf("failed to parse request body: %v", err)
+			}
+			if values.Get("token") != "opaque-token" {
+				t.Fatalf("unexpected token form value: %q", values.Get("token"))
+			}
+			if values.Get("client_assertion") != "" {
+				t.Fatalf("did not expect client_assertion for client_secret_basic, got %q", values.Get("client_assertion"))
+			}
+
+			responseBody := `{
+				"active": true,
+				"iss": "https://auth.example.com",
+				"aud": ["my-api"],
+				"sub": "opaque-user",
+				"scope": "read write",
+				"exp": ` + strconv.FormatInt(now.Add(time.Hour).Unix(), 10) + `,
+				"iat": ` + strconv.FormatInt(now.Unix(), 10) + `
+			}`
+
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(responseBody)),
+				Request:    r,
+			}, nil
+		}),
+	}
+
+	validator, err := NewOpaqueTokenValidator(
+		"https://auth.example.com/oauth2/introspect",
+		"https://auth.example.com",
+		"my-api",
+		"client-id",
+		"client-secret",
+		client,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("failed to create opaque validator: %v", err)
+	}
+
+	claims, err := validator.ValidateToken(context.Background(), "opaque-token")
+	if err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+	if claims.Subject != "opaque-user" {
+		t.Fatalf("unexpected subject: %q", claims.Subject)
+	}
+	if len(claims.Scopes) != 2 {
+		t.Fatalf("unexpected scopes: %v", claims.Scopes)
 	}
 }
 

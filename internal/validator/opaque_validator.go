@@ -464,34 +464,32 @@ func parseZitadelPrivateKeyEnvelope(rawJSON string) (any, string, string, error)
 func parsePrivateKeyPEM(rawPEM string) (any, error) {
 	pemBytes := []byte(rawPEM)
 
-	rsaKey, rsaErr := jwt.ParseRSAPrivateKeyFromPEM(pemBytes)
-	if rsaErr == nil {
-		return rsaKey, nil
-	}
-
-	ecdsaKey, ecdsaErr := jwt.ParseECPrivateKeyFromPEM(pemBytes)
-	if ecdsaErr == nil {
-		return ecdsaKey, nil
-	}
-
 	block, _ := pem.Decode(pemBytes)
 	if block == nil {
 		return nil, errors.New("validator: invalid introspection private key: expected PEM or JWK")
 	}
 
-	parsedKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf("validator: invalid introspection private key: %w", err)
+	parsedPKCS8Key, pkcs8Err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if pkcs8Err == nil {
+		switch key := parsedPKCS8Key.(type) {
+		case *rsa.PrivateKey:
+			return key, nil
+		case *ecdsa.PrivateKey:
+			return key, nil
+		default:
+			return nil, fmt.Errorf("validator: unsupported introspection private key type %T", parsedPKCS8Key)
+		}
 	}
 
-	switch key := parsedKey.(type) {
-	case *rsa.PrivateKey:
-		return key, nil
-	case *ecdsa.PrivateKey:
-		return key, nil
-	default:
-		return nil, fmt.Errorf("validator: unsupported introspection private key type %T", parsedKey)
+	if rsaKey, rsaErr := x509.ParsePKCS1PrivateKey(block.Bytes); rsaErr == nil {
+		return rsaKey, nil
 	}
+
+	if ecKey, ecErr := x509.ParseECPrivateKey(block.Bytes); ecErr == nil {
+		return ecKey, nil
+	}
+
+	return nil, fmt.Errorf("validator: invalid introspection private key: %w", pkcs8Err)
 }
 
 type privateKeyJWK struct {

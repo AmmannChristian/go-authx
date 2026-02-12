@@ -251,6 +251,58 @@ func TestOpaqueTokenValidator_ValidateToken_Success(t *testing.T) {
 	}
 }
 
+func TestOpaqueTokenValidator_ValidateToken_SuccessWithLogger(t *testing.T) {
+	now := time.Now().UTC()
+	logger := &mockLogger{}
+
+	client := &http.Client{
+		Transport: testutil.RoundTripFunc(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body: io.NopCloser(strings.NewReader(`{
+					"active": true,
+					"iss": "https://auth.example.com",
+					"aud": ["my-api"],
+					"sub": "user-logger",
+					"scope": "read write",
+					"exp": ` + strconv.FormatInt(now.Add(time.Hour).Unix(), 10) + `,
+					"iat": ` + strconv.FormatInt(now.Unix(), 10) + `
+				}`)),
+				Request: r,
+			}, nil
+		}),
+	}
+
+	v, err := NewOpaqueTokenValidator(
+		"https://auth.example.com/oauth2/introspect",
+		"https://auth.example.com",
+		"my-api",
+		"client-id",
+		"client-secret",
+		client,
+		logger,
+	)
+	if err != nil {
+		t.Fatalf("failed to create validator: %v", err)
+	}
+
+	if _, err := v.ValidateToken(context.Background(), "opaque-token"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	found := false
+	for _, msg := range logger.getMessages() {
+		if strings.Contains(msg, "introspected opaque token for subject user-logger") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected introspection success log, got %v", logger.getMessages())
+	}
+}
+
 func TestOpaqueTokenValidator_ValidateToken_Inactive(t *testing.T) {
 	client := &http.Client{
 		Transport: testutil.RoundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -837,6 +889,42 @@ func TestParsePrivateKeyPEM_UnsupportedKeyType(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unsupported introspection private key type") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParsePrivateKeyPEM_PKCS8RSA(t *testing.T) {
+	privateKey := mustGenerateRSAKey(t)
+	privateKeyPEM := mustEncodePKCS8PrivateKeyPEM(t, privateKey)
+
+	parsed, err := parsePrivateKeyPEM(privateKeyPEM)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	parsedRSA, ok := parsed.(*rsa.PrivateKey)
+	if !ok {
+		t.Fatalf("expected *rsa.PrivateKey, got %T", parsed)
+	}
+	if parsedRSA.N.Cmp(privateKey.N) != 0 {
+		t.Fatal("parsed RSA key does not match original key")
+	}
+}
+
+func TestParsePrivateKeyPEM_PKCS8EC(t *testing.T) {
+	privateKey := mustGenerateECKey(t)
+	privateKeyPEM := mustEncodePKCS8PrivateKeyPEM(t, privateKey)
+
+	parsed, err := parsePrivateKeyPEM(privateKeyPEM)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	parsedEC, ok := parsed.(*ecdsa.PrivateKey)
+	if !ok {
+		t.Fatalf("expected *ecdsa.PrivateKey, got %T", parsed)
+	}
+	if parsedEC.D.Cmp(privateKey.D) != 0 {
+		t.Fatal("parsed EC key does not match original key")
 	}
 }
 

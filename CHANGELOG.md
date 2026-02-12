@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Improved private-key parsing fallback order in opaque token validation internals (`PKCS8` first, then `PKCS1`/`EC`) to make key-type handling deterministic.
+
+### Tests
+- Added integration coverage for `grpcserver.NewOpaqueTokenValidator(...)` wrapper behavior.
+- Added validator coverage for opaque-token success logging.
+- Added validator coverage for `PKCS8` RSA and EC private key parsing paths.
+
 ## [1.2.0] - 2026-02-12
 
 ### Added
