@@ -7,13 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-02-12
+
 ### Changed
 - Improved private-key parsing fallback order in opaque token validation internals (`PKCS8` first, then `PKCS1`/`EC`) to make key-type handling deterministic.
+- OIDC introspection requests using `private_key_jwt` now include `client_id` in the form body (in addition to `client_assertion` fields) for provider compatibility (e.g. Zitadel).
 
 ### Tests
 - Added integration coverage for `grpcserver.NewOpaqueTokenValidator(...)` wrapper behavior.
 - Added validator coverage for opaque-token success logging.
 - Added validator coverage for `PKCS8` RSA and EC private key parsing paths.
+- Added validator coverage that verifies `private_key_jwt` introspection request form fields include `token`, `token_type_hint`, `client_assertion_type`, `client_assertion`, and `client_id`.
 
 ## [1.2.0] - 2026-02-12
 
