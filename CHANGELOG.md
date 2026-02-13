@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-02-13
+
+### Changed
+- Improved `OpaqueTokenValidator` introspection error reporting: non-200 responses now include the introspection response body in the error message, truncated to 512 characters.
+- Updated `private_key_jwt` client assertion audience (`aud`) to use the normalized issuer URL (trimmed whitespace and trailing slash) instead of the introspection endpoint URL for better ZITADEL compatibility.
+
+### Tests
+- Updated private key JWT assertion-claim tests to expect issuer-based `aud`.
+- Added validator coverage for `private_key_jwt` assertion audience normalization from issuer values with trailing slash/whitespace.
+
 ## [1.2.1] - 2026-02-12
 
 ### Changed
