@@ -590,7 +590,7 @@ func TestOpaqueTokenValidator_ValidateToken_PrivateKeyJWTRequestAndClaims(t *tes
 			if claims.Subject != "client-id" {
 				t.Fatalf("unexpected assertion sub: %q", claims.Subject)
 			}
-			if len(claims.Audience) != 1 || claims.Audience[0] != "https://auth.example.com/oauth2/introspect" {
+			if len(claims.Audience) != 1 || claims.Audience[0] != "https://auth.example.com" {
 				t.Fatalf("unexpected assertion aud: %v", claims.Audience)
 			}
 			if claims.IssuedAt == nil || claims.ExpiresAt == nil {
@@ -1348,6 +1348,44 @@ func TestBuildPrivateKeyJWTClientAssertion_UnsupportedSigningMethod(t *testing.T
 	}
 	if !strings.Contains(err.Error(), "unsupported introspection private_key_jwt algorithm") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBuildPrivateKeyJWTClientAssertion_AudienceFromTrimmedIssuer(t *testing.T) {
+	privateKey := mustGenerateRSAKey(t)
+
+	v := &OpaqueTokenValidator{
+		introspectionURL: "https://auth.example.com/oauth2/introspect",
+		issuer:           " https://auth.example.com/ ",
+		authConfig: IntrospectionClientAuthConfig{
+			ClientID:               "client-id",
+			PrivateKeyJWTAlgorithm: IntrospectionPrivateKeyJWTAlgorithmRS256,
+		},
+		privateKey: privateKey,
+	}
+
+	assertion, err := v.buildPrivateKeyJWTClientAssertion()
+	if err != nil {
+		t.Fatalf("unexpected error creating assertion: %v", err)
+	}
+
+	claims := &jwt.RegisteredClaims{}
+	token, err := jwt.ParseWithClaims(
+		assertion,
+		claims,
+		func(parsedToken *jwt.Token) (any, error) {
+			return &privateKey.PublicKey, nil
+		},
+		jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Alg()}),
+	)
+	if err != nil {
+		t.Fatalf("failed to parse assertion JWT: %v", err)
+	}
+	if !token.Valid {
+		t.Fatal("expected assertion JWT to be valid")
+	}
+	if len(claims.Audience) != 1 || claims.Audience[0] != "https://auth.example.com" {
+		t.Fatalf("unexpected assertion aud: %v", claims.Audience)
 	}
 }
 

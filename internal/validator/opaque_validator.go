@@ -268,10 +268,14 @@ func (v *OpaqueTokenValidator) buildPrivateKeyJWTClientAssertion() (string, erro
 
 	now := time.Now().UTC()
 	expiresAt := now.Add(privateKeyJWTAssertionLifetime)
+	assertionAudience := strings.TrimSuffix(strings.TrimSpace(v.issuer), "/")
+	if assertionAudience == "" {
+		assertionAudience = strings.TrimSpace(v.issuer)
+	}
 	claims := jwt.RegisteredClaims{
 		Issuer:    v.authConfig.ClientID,
 		Subject:   v.authConfig.ClientID,
-		Audience:  jwt.ClaimStrings{v.introspectionURL},
+		Audience:  jwt.ClaimStrings{assertionAudience},
 		IssuedAt:  jwt.NewNumericDate(now),
 		ExpiresAt: jwt.NewNumericDate(expiresAt),
 		ID:        jti,
