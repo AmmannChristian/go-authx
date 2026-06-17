@@ -2,7 +2,12 @@ package grpcclient
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
 	"net"
 	"os"
 	"path/filepath"
@@ -428,5 +433,67 @@ func BenchmarkBuilder_Build_WithOAuth2(b *testing.B) {
 			b.Fatalf("Build failed: %v", err)
 		}
 		conn.Close()
+	}
+}
+
+func generateBuilderTestKeyFileJSON(tb testing.TB) string {
+	tb.Helper()
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		tb.Fatalf("failed to generate RSA key: %v", err)
+	}
+
+	keyPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
+	})
+
+	payload := map[string]string{
+		"type":     "application",
+		"keyId":    "test-key-id",
+		"key":      string(keyPEM),
+		"clientId": "test-client-id",
+		"appId":    "test-app-id",
+	}
+
+	jsonBytes, err := json.Marshal(payload)
+	if err != nil {
+		tb.Fatalf("failed to marshal key JSON: %v", err)
+	}
+
+	return string(jsonBytes)
+}
+
+func TestBuilder_WithOAuth2PrivateKeyJWT(t *testing.T) {
+	builder := NewBuilder().
+		WithOAuth2PrivateKeyJWT("https://issuer.example.com", `{"keyId":"k","key":"pem","clientId":"c"}`, "openid")
+
+	if !builder.oauth2PrivateKeyJWTEnabled {
+		t.Error("private_key_jwt should be enabled")
+	}
+	if builder.oauth2IssuerURI != "https://issuer.example.com" {
+		t.Errorf("unexpected issuerURI: %s", builder.oauth2IssuerURI)
+	}
+	if builder.oauth2Scopes != "openid" {
+		t.Errorf("unexpected scopes: %s", builder.oauth2Scopes)
+	}
+}
+
+func TestBuilder_Build_WithOAuth2PrivateKeyJWT(t *testing.T) {
+	ctx := context.Background()
+	keyJSON := generateBuilderTestKeyFileJSON(t)
+
+	conn, err := NewBuilder().
+		WithAddress("localhost:9090").
+		WithOAuth2PrivateKeyJWT("https://issuer.example.com", keyJSON, "openid").
+		Build(ctx)
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+	defer conn.Close()
+
+	if conn == nil {
+		t.Fatal("connection should not be nil")
 	}
 }

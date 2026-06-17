@@ -18,12 +18,17 @@ import (
 type Builder struct {
 	address string
 
-	// OAuth2 configuration
+	// OAuth2 client credentials configuration
 	oauth2Enabled      bool
 	oauth2TokenURL     string
 	oauth2ClientID     string
 	oauth2ClientSecret string
 	oauth2Scopes       string
+
+	// OAuth2 private_key_jwt configuration
+	oauth2PrivateKeyJWTEnabled bool
+	oauth2IssuerURI            string
+	oauth2KeyFileJSON          string
 
 	// TLS configuration
 	tlsEnabled    bool
@@ -59,6 +64,20 @@ func (b *Builder) WithOAuth2(tokenURL, clientID, clientSecret, scopes string) *B
 	b.oauth2TokenURL = tokenURL
 	b.oauth2ClientID = clientID
 	b.oauth2ClientSecret = clientSecret
+	b.oauth2Scopes = scopes
+	return b
+}
+
+// WithOAuth2PrivateKeyJWT enables OAuth2 authentication using ZITADEL private_key_jwt.
+//
+// Parameters:
+//   - issuerURI: ZITADEL issuer URI (e.g., "https://my-org.zitadel.cloud")
+//   - keyFileJSON: content of the ZITADEL service-account key file
+//   - scopes: space-separated OAuth2 scopes (e.g., "openid")
+func (b *Builder) WithOAuth2PrivateKeyJWT(issuerURI, keyFileJSON, scopes string) *Builder {
+	b.oauth2PrivateKeyJWTEnabled = true
+	b.oauth2IssuerURI = issuerURI
+	b.oauth2KeyFileJSON = keyFileJSON
 	b.oauth2Scopes = scopes
 	return b
 }
@@ -112,6 +131,18 @@ func (b *Builder) Build(ctx context.Context) (*grpc.ClientConn, error) {
 			b.oauth2Scopes,
 		)
 
+		opts = append(opts,
+			grpc.WithUnaryInterceptor(tm.UnaryClientInterceptor()),
+			grpc.WithStreamInterceptor(tm.StreamClientInterceptor()),
+		)
+	}
+
+	// Add private_key_jwt OAuth2 interceptors if enabled
+	if b.oauth2PrivateKeyJWTEnabled {
+		tm, err := oauth2client.NewPrivateKeyJWTTokenManager(ctx, b.oauth2IssuerURI, b.oauth2KeyFileJSON, b.oauth2Scopes)
+		if err != nil {
+			return nil, fmt.Errorf("grpcclient: failed to initialize private_key_jwt token manager: %w", err)
+		}
 		opts = append(opts,
 			grpc.WithUnaryInterceptor(tm.UnaryClientInterceptor()),
 			grpc.WithStreamInterceptor(tm.StreamClientInterceptor()),

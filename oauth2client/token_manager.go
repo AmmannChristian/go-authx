@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -20,15 +21,30 @@ type Logger interface {
 	Printf(format string, args ...any)
 }
 
+// tokenFetcher is the strategy interface for obtaining a new OAuth2 token.
+type tokenFetcher interface {
+	fetchToken(ctx context.Context) (*oauth2.Token, error)
+}
+
+// clientCredsFetcher implements tokenFetcher using the OAuth2 client credentials flow.
+type clientCredsFetcher struct {
+	cfg *clientcredentials.Config
+}
+
+func (f *clientCredsFetcher) fetchToken(ctx context.Context) (*oauth2.Token, error) {
+	return f.cfg.Token(ctx)
+}
+
 // TokenManager manages OAuth2 tokens with automatic refresh.
-// It uses the client credentials flow and is safe for concurrent access.
+// It is safe for concurrent access.
 type TokenManager struct {
-	config       *clientcredentials.Config
+	fetcher      tokenFetcher
 	token        *oauth2.Token
 	mu           sync.RWMutex
 	ctx          context.Context // fallback context for backward compatibility
 	expiryLeeway time.Duration
-	logger       Logger // optional logger
+	logger       Logger       // optional logger
+	httpClient   *http.Client // set by WithHTTPClient; used by privateKeyJWTFetcher
 }
 
 // Option is a functional option for configuring TokenManager.
@@ -50,6 +66,38 @@ func WithLoggingEnabled() Option {
 	}
 }
 
+// WithHTTPClient overrides the HTTP client used for token requests.
+// Only applicable to TokenManagers created with NewPrivateKeyJWTTokenManager.
+// When not set, a default client with a 5-second timeout is used.
+func WithHTTPClient(c *http.Client) Option {
+	return func(tm *TokenManager) {
+		tm.httpClient = c
+	}
+}
+
+// newTokenManagerWithFetcher creates a TokenManager with a given token-fetching strategy.
+func newTokenManagerWithFetcher(ctx context.Context, fetcher tokenFetcher, opts ...Option) *TokenManager {
+	// Keep token requests independent from caller cancellations while preserving values.
+	// This context is used as a fallback for backward compatibility with GetToken().
+	if ctx == nil {
+		ctx = context.Background()
+	} else {
+		ctx = context.WithoutCancel(ctx)
+	}
+
+	tm := &TokenManager{
+		fetcher:      fetcher,
+		ctx:          ctx,
+		expiryLeeway: time.Minute, // refresh a bit before expiry to avoid near-expiry races
+	}
+
+	for _, opt := range opts {
+		opt(tm)
+	}
+
+	return tm
+}
+
 // NewTokenManager creates a new OAuth2 token manager using client credentials flow.
 //
 // Parameters:
@@ -60,36 +108,13 @@ func WithLoggingEnabled() Option {
 //   - scopes: Space-separated list of OAuth2 scopes (e.g., "openid profile email")
 //   - opts: Optional configuration options (WithLogger, WithLoggingEnabled)
 func NewTokenManager(ctx context.Context, tokenURL, clientID, clientSecret, scopes string, opts ...Option) *TokenManager {
-	// Split scopes by whitespace to avoid sending a single concatenated scope.
-	scopesList := strings.Fields(scopes)
-
-	// Keep token requests independent from caller cancellations while preserving values.
-	// This context is used as a fallback for backward compatibility with GetToken().
-	if ctx == nil {
-		ctx = context.Background()
-	} else {
-		ctx = context.WithoutCancel(ctx)
-	}
-
-	config := &clientcredentials.Config{
+	cfg := &clientcredentials.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		TokenURL:     tokenURL,
-		Scopes:       scopesList,
+		Scopes:       strings.Fields(scopes),
 	}
-
-	tm := &TokenManager{
-		config:       config,
-		ctx:          ctx,
-		expiryLeeway: time.Minute, // refresh a bit before expiry to avoid near-expiry races
-	}
-
-	// Apply options
-	for _, opt := range opts {
-		opt(tm)
-	}
-
-	return tm
+	return newTokenManagerWithFetcher(ctx, &clientCredsFetcher{cfg: cfg}, opts...)
 }
 
 // GetTokenWithContext returns a valid access token, fetching or refreshing if necessary.
@@ -127,7 +152,7 @@ func (tm *TokenManager) GetTokenWithContext(ctx context.Context) (string, error)
 	}
 
 	// Fetch new token using the provided context
-	token, err := tm.config.Token(ctx)
+	token, err := tm.fetcher.fetchToken(ctx)
 	if err != nil {
 		return "", fmt.Errorf("oauth2: failed to fetch token: %w", err)
 	}

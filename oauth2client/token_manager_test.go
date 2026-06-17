@@ -103,20 +103,24 @@ func TestNewTokenManager(t *testing.T) {
 				t.Fatal("TokenManager should not be nil")
 			}
 
-			if tm.config == nil {
+			ccf, ok := tm.fetcher.(*clientCredsFetcher)
+			if !ok {
+				t.Fatal("expected *clientCredsFetcher")
+			}
+			if ccf.cfg == nil {
 				t.Fatal("config should not be nil")
 			}
 
-			if tm.config.ClientID != tt.clientID {
-				t.Errorf("expected ClientID %s, got %s", tt.clientID, tm.config.ClientID)
+			if ccf.cfg.ClientID != tt.clientID {
+				t.Errorf("expected ClientID %s, got %s", tt.clientID, ccf.cfg.ClientID)
 			}
 
-			if tm.config.ClientSecret != tt.clientSecret {
-				t.Errorf("expected ClientSecret %s, got %s", tt.clientSecret, tm.config.ClientSecret)
+			if ccf.cfg.ClientSecret != tt.clientSecret {
+				t.Errorf("expected ClientSecret %s, got %s", tt.clientSecret, ccf.cfg.ClientSecret)
 			}
 
-			if tm.config.TokenURL != tt.tokenURL {
-				t.Errorf("expected TokenURL %s, got %s", tt.tokenURL, tm.config.TokenURL)
+			if ccf.cfg.TokenURL != tt.tokenURL {
+				t.Errorf("expected TokenURL %s, got %s", tt.tokenURL, ccf.cfg.TokenURL)
 			}
 
 			if tm.expiryLeeway != time.Minute {

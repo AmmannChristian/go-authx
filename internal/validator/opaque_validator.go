@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AmmannChristian/go-authx/internal/keys"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -439,39 +440,14 @@ func parseIntrospectionPrivateKeyJSON(rawJSON string) (any, string, string, stri
 	}
 
 	if _, isZitadelKey := envelope["key"]; isZitadelKey {
-		privateKey, keyID, clientID, err := parseZitadelPrivateKeyEnvelope(rawJSON)
+		keyEnvelope, privateKey, err := keys.ParseZitadelKeyEnvelope(rawJSON)
 		if err != nil {
 			return nil, "", "", "", err
 		}
-		return privateKey, keyID, "", clientID, nil
+		return privateKey, keyEnvelope.KeyID, "", keyEnvelope.ClientID, nil
 	}
 
 	return nil, "", "", "", errors.New("validator: invalid introspection private key JSON: expected JWK or Zitadel key JSON")
-}
-
-type zitadelPrivateKeyEnvelope struct {
-	KeyID    string `json:"keyId"`
-	Key      string `json:"key"`
-	ClientID string `json:"clientId"`
-}
-
-func parseZitadelPrivateKeyEnvelope(rawJSON string) (any, string, string, error) {
-	var envelope zitadelPrivateKeyEnvelope
-	if err := json.Unmarshal([]byte(rawJSON), &envelope); err != nil {
-		return nil, "", "", fmt.Errorf("validator: invalid Zitadel key JSON: %w", err)
-	}
-
-	privateKeyPEM := strings.TrimSpace(envelope.Key)
-	if privateKeyPEM == "" {
-		return nil, "", "", errors.New("validator: invalid Zitadel key JSON: key is required")
-	}
-
-	privateKey, err := parsePrivateKeyPEM(privateKeyPEM)
-	if err != nil {
-		return nil, "", "", err
-	}
-
-	return privateKey, strings.TrimSpace(envelope.KeyID), strings.TrimSpace(envelope.ClientID), nil
 }
 
 func parsePrivateKeyPEM(rawPEM string) (any, error) {
