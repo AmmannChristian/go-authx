@@ -36,8 +36,7 @@ type privateKeyJWTFetcher struct {
 
 func (f *privateKeyJWTFetcher) fetchToken(ctx context.Context) (*oauth2.Token, error) {
 	now := time.Now().UTC()
-	//nolint:gosec // jti only needs uniqueness, not cryptographic security (RFC 7523)
-	jti := fmt.Sprintf("%d-%d", now.UnixNano(), rand.Int64())
+	jti := fmt.Sprintf("%d-%d", now.UnixNano(), rand.Int64()) // #nosec G404 -- jti only needs uniqueness, not cryptographic security (RFC 7523)
 
 	claims := jwt.RegisteredClaims{
 		Issuer:    f.clientID,
@@ -80,7 +79,10 @@ func (f *privateKeyJWTFetcher) fetchToken(ctx context.Context) (*oauth2.Token, e
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
+		if readErr != nil {
+			body = nil
+		}
 		return nil, fmt.Errorf("oauth2: token endpoint returned %d: %s", resp.StatusCode, string(body))
 	}
 

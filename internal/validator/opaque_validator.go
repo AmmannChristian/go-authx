@@ -2,6 +2,7 @@ package validator
 
 import (
 	"context"
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -577,6 +578,20 @@ func parseRSAPrivateKeyJWK(jwk privateKeyJWK) (*rsa.PrivateKey, error) {
 	return privateKey, nil
 }
 
+func padP256Scalar(b []byte) ([]byte, error) {
+	const size = 32
+	switch {
+	case len(b) > size:
+		return nil, errors.New("validator: d in introspection EC JWK exceeds P-256 scalar size")
+	case len(b) < size:
+		padded := make([]byte, size)
+		copy(padded[size-len(b):], b)
+		return padded, nil
+	default:
+		return b, nil
+	}
+}
+
 func parseECPrivateKeyJWK(jwk privateKeyJWK) (*ecdsa.PrivateKey, error) {
 	if strings.TrimSpace(jwk.CRV) != "P-256" {
 		return nil, fmt.Errorf("validator: unsupported introspection EC JWK curve %q", jwk.CRV)
@@ -587,16 +602,20 @@ func parseECPrivateKeyJWK(jwk privateKeyJWK) (*ecdsa.PrivateKey, error) {
 		return nil, err
 	}
 
-	curve := elliptic.P256()
-	d := new(big.Int).SetBytes(dBytes)
-	if d.Sign() <= 0 || d.Cmp(curve.Params().N) >= 0 {
-		return nil, errors.New("validator: invalid d in introspection EC JWK")
+	dBytes, err = padP256Scalar(dBytes)
+	if err != nil {
+		return nil, err
 	}
 
-	x, y := curve.ScalarBaseMult(dBytes)
-	if x == nil || y == nil {
-		return nil, errors.New("validator: failed to derive public key from introspection EC JWK")
+	// ecdh.P256().NewPrivateKey validates that the scalar is non-zero and within the curve order.
+	ecdhKey, ecdhErr := ecdh.P256().NewPrivateKey(dBytes)
+	if ecdhErr != nil {
+		return nil, fmt.Errorf("validator: invalid d in introspection EC JWK: %w", ecdhErr)
 	}
+	pubBytes := ecdhKey.PublicKey().Bytes() // 0x04 || x(32) || y(32)
+	x := new(big.Int).SetBytes(pubBytes[1:33])
+	y := new(big.Int).SetBytes(pubBytes[33:65])
+	curve := elliptic.P256()
 
 	if jwk.X != "" || jwk.Y != "" {
 		if jwk.X == "" || jwk.Y == "" {
@@ -619,7 +638,7 @@ func parseECPrivateKeyJWK(jwk privateKeyJWK) (*ecdsa.PrivateKey, error) {
 
 	return &ecdsa.PrivateKey{
 		PublicKey: ecdsa.PublicKey{Curve: curve, X: x, Y: y},
-		D:         d,
+		D:         new(big.Int).SetBytes(dBytes),
 	}, nil
 }
 

@@ -1,6 +1,7 @@
 package validator
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -1087,7 +1088,15 @@ func TestParsePrivateKeyPEM_PKCS8EC(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *ecdsa.PrivateKey, got %T", parsed)
 	}
-	if parsedEC.D.Cmp(privateKey.D) != 0 {
+	parsedECDH, err := parsedEC.ECDH()
+	if err != nil {
+		t.Fatalf("parsedEC.ECDH(): %v", err)
+	}
+	origECDH, err := privateKey.ECDH()
+	if err != nil {
+		t.Fatalf("privateKey.ECDH(): %v", err)
+	}
+	if !bytes.Equal(parsedECDH.Bytes(), origECDH.Bytes()) {
 		t.Fatal("parsed EC key does not match original key")
 	}
 }
@@ -1143,13 +1152,18 @@ func TestParseRSAPrivateKeyJWK_SmallExponent(t *testing.T) {
 
 func TestParseECPrivateKeyJWK_PartialXY(t *testing.T) {
 	privateKey := mustGenerateECKey(t)
+	ecdhKey, err := privateKey.ECDH()
+	if err != nil {
+		t.Fatalf("privateKey.ECDH(): %v", err)
+	}
+	pubBytes := ecdhKey.PublicKey().Bytes() // 0x04 || x(32) || y(32)
 	jwk := privateKeyJWK{
 		CRV: "P-256",
-		D:   base64.RawURLEncoding.EncodeToString(privateKey.D.Bytes()),
-		X:   base64.RawURLEncoding.EncodeToString(privateKey.PublicKey.X.Bytes()),
+		D:   base64.RawURLEncoding.EncodeToString(ecdhKey.Bytes()),
+		X:   base64.RawURLEncoding.EncodeToString(pubBytes[1:33]),
 		Y:   "", // intentionally missing
 	}
-	_, err := parseECPrivateKeyJWK(jwk)
+	_, err = parseECPrivateKeyJWK(jwk)
 	if err == nil || !strings.Contains(err.Error(), "requires both x and y") {
 		t.Fatalf("expected partial XY error, got %v", err)
 	}
@@ -1936,13 +1950,15 @@ func mustEncodeRSAKeyAsJWK(tb testing.TB, privateKey *rsa.PrivateKey, keyID, alg
 func mustEncodeECKeyAsJWK(tb testing.TB, privateKey *ecdsa.PrivateKey, keyID, algorithm string) string {
 	tb.Helper()
 
-	encodeBigInt := func(value *big.Int) string {
-		return base64.RawURLEncoding.EncodeToString(value.Bytes())
+	ecdhKey, err := privateKey.ECDH()
+	if err != nil {
+		tb.Fatalf("privateKey.ECDH(): %v", err)
 	}
-
+	pubBytes := ecdhKey.PublicKey().Bytes() // 0x04 || x(32) || y(32)
 	jwk := `{"kty":"EC","kid":"` + keyID + `","alg":"` + algorithm + `","crv":"P-256","x":"` +
-		encodeBigInt(privateKey.PublicKey.X) + `","y":"` + encodeBigInt(privateKey.PublicKey.Y) + `","d":"` +
-		encodeBigInt(privateKey.D) + `"}`
+		base64.RawURLEncoding.EncodeToString(pubBytes[1:33]) + `","y":"` +
+		base64.RawURLEncoding.EncodeToString(pubBytes[33:65]) + `","d":"` +
+		base64.RawURLEncoding.EncodeToString(ecdhKey.Bytes()) + `"}`
 
 	return jwk
 }

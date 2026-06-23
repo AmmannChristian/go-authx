@@ -256,8 +256,7 @@ func extractAndValidateToken(ctx context.Context, config *InterceptorConfig) (*T
 	// Validate token
 	claims, err := config.validator.ValidateToken(ctx, token)
 	if err != nil {
-		var ve *ivalidator.ValidationError
-		if errors.As(err, &ve) {
+		if ve, ok := errors.AsType[*ivalidator.ValidationError](err); ok {
 			return nil, status.Error(codes.Unauthenticated, "grpcserver: token validation failed: "+ve.Public)
 		}
 		return nil, status.Errorf(codes.Unauthenticated, "grpcserver: token validation failed: %v", err)

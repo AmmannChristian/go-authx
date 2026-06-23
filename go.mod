@@ -1,6 +1,6 @@
 module github.com/AmmannChristian/go-authx
 
-go 1.26.3
+go 1.26.4
 
 require (
 	github.com/MicahParks/keyfunc/v2 v2.1.0
@@ -216,7 +216,7 @@ require (
 	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20250210185358-939b2ce775ac // indirect
 	golang.org/x/mod v0.33.0 // indirect
-	golang.org/x/net v0.50.0 // indirect
+	golang.org/x/net v0.51.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260209163413-e7419c687ee4 // indirect

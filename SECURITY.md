@@ -6,8 +6,8 @@ We release patches for security vulnerabilities. Which versions are eligible for
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
-| < 0.1.0 | :x:                |
+| 1.x     | :white_check_mark: |
+| < 1.0.0 | :x:                |
 
 ## Reporting a Vulnerability
 
@@ -111,12 +111,17 @@ This library includes:
 - ✅ TLS 1.2+ enforcement (configurable to TLS 1.3)
 - ✅ JWT signature verification with JWKS
 - ✅ Token expiration validation
-- ✅ Audience and issuer claim validation
+- ✅ Audience and issuer claim validation (non-empty claims required)
 - ✅ Secure path handling with `os.OpenInRoot`
 - ✅ Thread-safe token caching
 - ✅ Context-aware cancellation
 - ✅ No token logging in production
 - ✅ mTLS support for client authentication
+- ✅ Open redirect blocking for OAuth2 clients, `private_key_jwt` fetcher, and opaque token introspection
+- ✅ Sanitized error responses — internal introspection details are never forwarded to callers
+- ✅ Path canonicalization for exempt-path matching (prevents path-traversal bypass)
+- ✅ Issuer URI validation for `private_key_jwt` (HTTPS-only, no private/loopback IPs)
+- ✅ CAFile required when TLS `ClientAuth` verifies client certificates
 
 ## Acknowledgments
 

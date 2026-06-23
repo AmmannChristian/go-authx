@@ -106,7 +106,7 @@ func (c *certCache) refreshLoop(interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for range ticker.C {
-		_ = c.reload()
+		_ = c.reload() //nolint:errcheck // background refresh; cached cert remains valid on failure
 	}
 }
 

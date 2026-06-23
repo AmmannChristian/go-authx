@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go-version: [ '1.26.3' ]
+        go-version: [ '1.26.4' ]
 
     steps:
       - name: Checkout code
@@ -43,7 +43,7 @@ jobs:
         run: go tool cover -html=build/coverage.out -o build/coverage.html
 
       - name: Upload coverage to Codecov
-        if: matrix.go-version == '1.26.3'
+        if: matrix.go-version == '1.26.4'
         uses: codecov/codecov-action@v4
         with:
           file: ./build/coverage.out
@@ -53,7 +53,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Upload coverage artifacts
-        if: matrix.go-version == '1.26.3'
+        if: matrix.go-version == '1.26.4'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
@@ -73,7 +73,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.3'
+          go-version: '1.26.4'
           cache: true
 
       - name: Install golangci-lint
@@ -94,7 +94,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.3'
+          go-version: '1.26.4'
           cache: true
 
       - name: Run go vet
@@ -112,7 +112,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.3'
+          go-version: '1.26.4'
           cache: true
 
       - name: Install staticcheck
@@ -133,7 +133,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.3'
+          go-version: '1.26.4'
           cache: true
 
       - name: Run gosec
@@ -162,7 +162,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go-version: [ '1.26.3' ]
+        go-version: [ '1.26.4' ]
         os: [ ubuntu-latest, macos-latest, windows-latest ]
 
     steps:
@@ -179,7 +179,7 @@ jobs:
         run: make build
 
       - name: Check for uncommitted changes
-        if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.26.3'
+        if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.26.4'
         run: |
           if [ -n "$(git status --porcelain)" ]; then
             echo "Uncommitted changes detected"
@@ -200,7 +200,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.3'
+          go-version: '1.26.4'
           cache: true
 
       - name: Install govulncheck

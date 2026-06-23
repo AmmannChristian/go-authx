@@ -128,16 +128,14 @@ func Middleware(validator TokenValidator, opts ...MiddlewareOption) func(http.Ha
 		validator:   validator,
 		exemptPaths: make(map[string]bool),
 		unauthorizedHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			var ve *ivalidator.ValidationError
-			if errors.As(err, &ve) {
+			if ve, ok := errors.AsType[*ivalidator.ValidationError](err); ok {
 				http.Error(w, ve.Public, http.StatusUnauthorized)
 			} else {
 				http.Error(w, err.Error(), http.StatusUnauthorized)
 			}
 		},
 		forbiddenHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			var ve *ivalidator.ValidationError
-			if errors.As(err, &ve) {
+			if ve, ok := errors.AsType[*ivalidator.ValidationError](err); ok {
 				http.Error(w, ve.Public, http.StatusForbidden)
 			} else {
 				http.Error(w, err.Error(), http.StatusForbidden)

@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-06-23
+
+### Changed
+- `private_key_jwt` assertion audience (`aud`) is now the introspection endpoint URL, not the issuer — reverts the 1.2.2 change and aligns with RFC 7523 §3
+- `OpaqueTokenValidator` non-200 introspection errors are now wrapped in an internal `ValidationError` type; HTTP and gRPC layers expose only a generic public message to callers while preserving full detail (including the truncated response body) internally for logging
+- TLS certificate in `grpcserver` is now cached in memory and refreshed every 60 s by a background goroutine, replacing the previous per-handshake disk read
+- Falsy values (`false`, `0`, `""`, `nil`) in map-typed JWT claims are now excluded when extracting roles/scopes in authz policy evaluation
+
+### Security
+- Block HTTP redirects in `httpclient` (`Builder.Build` and `NewHTTPClient`), `oauth2client` `private_key_jwt` fetcher, and `OpaqueTokenValidator` introspection client to prevent Bearer token or client-assertion leakage to a redirected host
+- Introduce `ValidationError` with separate `Public`/`Internal` fields; `httpserver` middleware and `grpcserver` interceptors now surface only the safe public message to unauthenticated callers
+- Canonicalize exempt paths with `path.Clean` in `httpserver` middleware to close a path-traversal bypass (e.g. `/public/../api/admin` was previously matched as exempt under `/public/`)
+- Validate issuer URI in `NewPrivateKeyJWTTokenManager`: must be HTTPS, absolute, no user info, no query/fragment, no loopback or private IP addresses
+- Require `CAFile` when `ClientAuth` is `VerifyClientCertIfGiven` or `RequireAndVerifyClientCert` in both `grpcserver` and `httpserver` TLS config — previously the CA was silently unused, making verification a no-op
+- `OpaqueTokenValidator` now requires non-empty `iss` and `aud` claims from the introspection response instead of silently falling back to the configured values
+
+### Tests
+- Added end-to-end redirect-blocking tests for `httpclient`, `oauth2client` private key JWT fetcher, and `OpaqueTokenValidator`
+- Added `ValidationError` propagation tests through HTTP middleware and gRPC interceptors, verifying sensitive introspection body is not leaked to callers
+- Added path-traversal exempt-bypass test for `httpserver` middleware
+- Added issuer URI validation tests for `NewPrivateKeyJWTTokenManager` (HTTP, relative URL, missing host, user info, query/fragment, loopback/private IPs)
+- Added CAFile-required tests for verifying `ClientAuth` modes in `grpcserver` and `httpserver`
+- Added missing/malformed `iss` and `aud` introspection claim tests for `OpaqueTokenValidator`
+- Added `certCache` reload-error resilience test (stale cert served after failed refresh)
+
+### CI
+- Bump Go version from `1.25.4` to `1.26.4`
+
 ## [1.2.2] - 2026-02-13
 
 ### Changed
@@ -155,7 +183,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for OAuth2 scopes
 - Context isolation for token claims
 
-[Unreleased]: https://github.com/AmmannChristian/go-authx/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/AmmannChristian/go-authx/compare/v1.2.3...HEAD
+[1.2.3]: https://github.com/AmmannChristian/go-authx/compare/v1.2.2...v1.2.3
+[1.2.2]: https://github.com/AmmannChristian/go-authx/compare/v1.2.1...v1.2.2
+[1.2.1]: https://github.com/AmmannChristian/go-authx/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/AmmannChristian/go-authx/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/AmmannChristian/go-authx/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/AmmannChristian/go-authx/compare/v1.0.0...v1.0.1

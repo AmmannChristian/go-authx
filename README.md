@@ -283,7 +283,7 @@ server := grpc.NewServer(
 )
 ```
 
-**Automatic Certificate Reload**: Certificates are automatically reloaded on each TLS handshake, enabling zero-downtime certificate rotation. This is perfect for environments using tools like Vault Agent or cert-manager that automatically renew certificates.
+**Automatic Certificate Rotation**: The server certificate is loaded once at startup and cached in memory. A background goroutine refreshes the cache every 60 seconds, so rotated certificates (e.g. from Vault Agent or cert-manager) are picked up without restarting the server and without a disk read on every TLS handshake.
 
 #### Advanced Configuration
 
