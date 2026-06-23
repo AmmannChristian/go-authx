@@ -3,11 +3,14 @@ package httpserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	ivalidator "github.com/AmmannChristian/go-authx/internal/validator"
 )
 
 // mockValidator implements TokenValidator for testing
@@ -162,6 +165,39 @@ func TestMiddleware_ValidationError(t *testing.T) {
 	}
 }
 
+func TestMiddleware_ValidationError_BodyNotLeaked(t *testing.T) {
+	sensitiveBody := `{"error":"server_error","detail":"db password is hunter2"}`
+
+	mockVal := &mockValidator{
+		validateFunc: func(ctx context.Context, token string) (*TokenClaims, error) {
+			return nil, &ivalidator.ValidationError{
+				Public:   "validator: token introspection failed",
+				Internal: fmt.Errorf("validator: introspection endpoint returned status 500: %s", sensitiveBody),
+			}
+		},
+	}
+
+	middleware := Middleware(mockVal)
+	req := httptest.NewRequest("GET", "/api/resource", nil)
+	req.Header.Set("Authorization", "Bearer some-token")
+	rr := httptest.NewRecorder()
+
+	middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("handler must not be called on auth failure")
+	})).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rr.Code)
+	}
+	body := strings.TrimSpace(rr.Body.String())
+	if strings.Contains(body, "server_error") || strings.Contains(body, "hunter2") {
+		t.Errorf("response body must not contain sensitive introspection data, got: %q", body)
+	}
+	if !strings.Contains(body, "validator: token introspection failed") {
+		t.Errorf("response body should contain the public message, got: %q", body)
+	}
+}
+
 func TestMiddleware_ExemptPath(t *testing.T) {
 	validator := &mockValidator{
 		validateFunc: func(ctx context.Context, token string) (*TokenClaims, error) {
@@ -227,6 +263,26 @@ func TestMiddleware_ExemptPathPrefix(t *testing.T) {
 				t.Errorf("expected status 200 for exempt path %s, got %d", path, rr.Code)
 			}
 		})
+	}
+}
+
+func TestMiddleware_ExemptPathPrefixCanonicalizesBeforeMatching(t *testing.T) {
+	validator := &mockValidator{}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("handler should not be called for non-exempt traversal path without auth")
+	})
+
+	middleware := Middleware(validator, WithExemptPathPrefixes("/public/"))
+	wrappedHandler := middleware(handler)
+
+	req := httptest.NewRequest("GET", "/public/../api/admin", nil)
+	rr := httptest.NewRecorder()
+
+	wrappedHandler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("expected status 401 for traversal path outside exempt prefix, got %d", rr.Code)
 	}
 }
 
@@ -475,6 +531,8 @@ func TestIsExempt(t *testing.T) {
 		{"/health", true},
 		{"/metrics", true},
 		{"/public/index.html", true},
+		{"/public/./index.html", true},
+		{"/public/../api/admin", false},
 		{"/static/css/style.css", true},
 		{"/api/users", false},
 		{"/healthcheck", false},    // Not exact match
@@ -553,6 +611,121 @@ func TestMiddleware_DifferentHTTPMethods(t *testing.T) {
 				t.Errorf("expected status 200 for %s, got %d", method, rr.Code)
 			}
 		})
+	}
+}
+
+func TestMiddleware_WithForbiddenHandler(t *testing.T) {
+	validator := &mockValidator{}
+
+	customCalled := false
+	customHandler := ForbiddenHandler(func(w http.ResponseWriter, r *http.Request, err error) {
+		customCalled = true
+		http.Error(w, "custom forbidden", http.StatusForbidden)
+	})
+
+	policy := AuthorizationPolicy{RequiredRoles: []string{"admin"}}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	middleware := Middleware(validator,
+		WithAuthorizationPolicy(policy),
+		WithForbiddenHandler(customHandler),
+	)
+
+	req := httptest.NewRequest("GET", "/api/resource", nil)
+	req.Header.Set("Authorization", "Bearer valid-token")
+	rr := httptest.NewRecorder()
+
+	middleware(handler).ServeHTTP(rr, req)
+
+	if !customCalled {
+		t.Error("expected custom forbidden handler to be called")
+	}
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", rr.Code)
+	}
+}
+
+func TestNewOpaqueTokenValidator_Httpserver(t *testing.T) {
+	v, err := NewOpaqueTokenValidator(
+		"https://auth.example.com/oauth2/introspect",
+		"https://auth.example.com",
+		"my-api",
+		"client-id",
+		"client-secret",
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v == nil {
+		t.Fatal("expected non-nil validator")
+	}
+}
+
+func TestCanonicalizeExemptPath(t *testing.T) {
+	if got := canonicalizeExemptPath(""); got != "/" {
+		t.Errorf("expected / for empty path, got %q", got)
+	}
+	if got := canonicalizeExemptPath("/api/v1"); got != "/api/v1" {
+		t.Errorf("expected /api/v1, got %q", got)
+	}
+	if got := canonicalizeExemptPath("/api/v1/"); got != "/api/v1/" {
+		t.Errorf("expected trailing slash preserved, got %q", got)
+	}
+}
+
+func TestMiddleware_CustomTokenExtractor_NotExtracted(t *testing.T) {
+	validator := &mockValidator{}
+
+	alwaysFail := func(r *http.Request) (string, bool) {
+		return "", false
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("handler should not be called when extraction fails")
+	})
+
+	middleware := Middleware(validator, WithTokenExtractor(alwaysFail))
+	req := httptest.NewRequest("GET", "/api/resource", nil)
+	rr := httptest.NewRecorder()
+
+	middleware(handler).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rr.Code)
+	}
+}
+
+func TestMiddleware_AuthorizationFailure_WithLogger(t *testing.T) {
+	logger := &mockLogger{}
+	validator := &mockValidator{}
+
+	policy := AuthorizationPolicy{RequiredRoles: []string{"admin"}}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("handler should not be called")
+	})
+
+	middleware := Middleware(validator,
+		WithAuthorizationPolicy(policy),
+		WithMiddlewareLogger(logger),
+	)
+
+	req := httptest.NewRequest("GET", "/api/resource", nil)
+	req.Header.Set("Authorization", "Bearer valid-token")
+	rr := httptest.NewRecorder()
+
+	middleware(handler).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", rr.Code)
+	}
+	if len(logger.getMessages()) == 0 {
+		t.Error("expected logger to be called")
 	}
 }
 

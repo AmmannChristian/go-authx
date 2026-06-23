@@ -141,6 +141,13 @@ func NewOpaqueTokenValidatorWithAuth(
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
+	if httpClient.CheckRedirect == nil {
+		c := *httpClient
+		c.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+		httpClient = &c
+	}
 
 	return &OpaqueTokenValidator{
 		introspectionURL: normalizedIntrospectionURL,
@@ -207,11 +214,14 @@ func (v *OpaqueTokenValidator) introspect(ctx context.Context, tokenString strin
 		if len(respText) > 512 {
 			respText = respText[:512] + "..."
 		}
-		return nil, fmt.Errorf(
-			"validator: introspection endpoint returned status %d: %s",
-			resp.StatusCode,
-			respText,
-		)
+		return nil, &ValidationError{
+			Public: "validator: token introspection failed",
+			Internal: fmt.Errorf(
+				"validator: introspection endpoint returned status %d: %s",
+				resp.StatusCode,
+				respText,
+			),
+		}
 	}
 
 	introspectionClaims, err := decodeIntrospectionClaims(body)
@@ -269,10 +279,7 @@ func (v *OpaqueTokenValidator) buildPrivateKeyJWTClientAssertion() (string, erro
 
 	now := time.Now().UTC()
 	expiresAt := now.Add(privateKeyJWTAssertionLifetime)
-	assertionAudience := strings.TrimSuffix(strings.TrimSpace(v.issuer), "/")
-	if assertionAudience == "" {
-		assertionAudience = strings.TrimSpace(v.issuer)
-	}
+	assertionAudience := v.introspectionURL
 	claims := jwt.RegisteredClaims{
 		Issuer:    v.authConfig.ClientID,
 		Subject:   v.authConfig.ClientID,
@@ -716,12 +723,12 @@ func (v *OpaqueTokenValidator) validateAndBuildClaims(introspectionClaims map[st
 }
 
 func (v *OpaqueTokenValidator) resolveIssuer(introspectionClaims map[string]interface{}) (string, error) {
-	issuer := v.issuer
-	if tokenIssuer := claimString(introspectionClaims, "iss"); tokenIssuer != "" {
-		if tokenIssuer != v.issuer {
-			return "", fmt.Errorf("validator: invalid issuer: expected %s, got %s", v.issuer, tokenIssuer)
-		}
-		issuer = tokenIssuer
+	issuer := claimString(introspectionClaims, "iss")
+	if issuer == "" {
+		return "", errors.New("validator: invalid issuer claim: empty")
+	}
+	if issuer != v.issuer {
+		return "", fmt.Errorf("validator: invalid issuer: expected %s, got %s", v.issuer, issuer)
 	}
 
 	return issuer, nil
@@ -729,11 +736,11 @@ func (v *OpaqueTokenValidator) resolveIssuer(introspectionClaims map[string]inte
 
 func (v *OpaqueTokenValidator) resolveAudience(introspectionClaims map[string]interface{}) ([]string, error) {
 	audience := extractAudience(introspectionClaims["aud"])
-	if len(audience) > 0 && !contains(audience, v.audience) {
-		return nil, fmt.Errorf("validator: invalid audience: expected %s in %v", v.audience, audience)
-	}
 	if len(audience) == 0 {
-		audience = []string{v.audience}
+		return nil, errors.New("validator: invalid audience claim: empty")
+	}
+	if !contains(audience, v.audience) {
+		return nil, fmt.Errorf("validator: invalid audience: expected %s in %v", v.audience, audience)
 	}
 
 	return audience, nil

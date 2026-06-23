@@ -3,6 +3,7 @@ package httpserver_test
 import (
 	"crypto/tls"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/AmmannChristian/go-authx/httpserver"
@@ -131,6 +132,31 @@ func TestTLSConfig_ClientAuth(t *testing.T) {
 			_, err := httpserver.NewTLSConfig(config)
 			if err == nil {
 				t.Error("Expected error with nonexistent cert files")
+			}
+		})
+	}
+}
+
+func TestTLSConfig_VerifyingClientAuthRequiresCAFile(t *testing.T) {
+	verificationModes := []tls.ClientAuthType{
+		tls.VerifyClientCertIfGiven,
+		tls.RequireAndVerifyClientCert,
+	}
+
+	for _, mode := range verificationModes {
+		t.Run(mode.String(), func(t *testing.T) {
+			config := &httpserver.TLSConfig{
+				CertFile:   "/path/to/cert.pem",
+				KeyFile:    "/path/to/key.pem",
+				ClientAuth: mode,
+			}
+
+			_, err := httpserver.NewTLSConfig(config)
+			if err == nil {
+				t.Fatal("Expected error when verifying client certificates without CAFile")
+			}
+			if !strings.Contains(err.Error(), "CA file is required") {
+				t.Fatalf("Expected missing CAFile error, got %v", err)
 			}
 		})
 	}

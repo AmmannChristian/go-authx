@@ -1,10 +1,13 @@
 package httpserver
 
 import (
+	"errors"
 	"net/http"
+	"path"
 	"strings"
 
 	"github.com/AmmannChristian/go-authx/authz"
+	ivalidator "github.com/AmmannChristian/go-authx/internal/validator"
 )
 
 // MiddlewareConfig holds configuration for authentication middleware.
@@ -125,10 +128,20 @@ func Middleware(validator TokenValidator, opts ...MiddlewareOption) func(http.Ha
 		validator:   validator,
 		exemptPaths: make(map[string]bool),
 		unauthorizedHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
+			var ve *ivalidator.ValidationError
+			if errors.As(err, &ve) {
+				http.Error(w, ve.Public, http.StatusUnauthorized)
+			} else {
+				http.Error(w, err.Error(), http.StatusUnauthorized)
+			}
 		},
 		forbiddenHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, err.Error(), http.StatusForbidden)
+			var ve *ivalidator.ValidationError
+			if errors.As(err, &ve) {
+				http.Error(w, ve.Public, http.StatusForbidden)
+			} else {
+				http.Error(w, err.Error(), http.StatusForbidden)
+			}
 		},
 		authorizer: authz.NewEvaluator(authz.AuthorizationPolicy{}),
 	}
@@ -180,20 +193,35 @@ func Middleware(validator TokenValidator, opts ...MiddlewareOption) func(http.Ha
 }
 
 // isExempt checks if a path is exempt from authentication.
-func isExempt(path string, config *MiddlewareConfig) bool {
+func isExempt(requestPath string, config *MiddlewareConfig) bool {
+	canonicalPath := canonicalizeExemptPath(requestPath)
+
 	// Check exact path matches
-	if config.exemptPaths[path] {
+	if config.exemptPaths[canonicalPath] {
 		return true
 	}
 
 	// Check prefix matches
 	for _, prefix := range config.exemptPathPrefixes {
-		if strings.HasPrefix(path, prefix) {
+		if strings.HasPrefix(canonicalPath, canonicalizeExemptPath(prefix)) {
 			return true
 		}
 	}
 
 	return false
+}
+
+func canonicalizeExemptPath(requestPath string) string {
+	if requestPath == "" {
+		return "/"
+	}
+
+	canonicalPath := path.Clean(requestPath)
+	if strings.HasSuffix(requestPath, "/") && canonicalPath != "/" {
+		canonicalPath += "/"
+	}
+
+	return canonicalPath
 }
 
 // extractAndValidateToken extracts the Bearer token from the request and validates it.

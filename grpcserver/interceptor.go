@@ -2,9 +2,11 @@ package grpcserver
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/AmmannChristian/go-authx/authz"
+	ivalidator "github.com/AmmannChristian/go-authx/internal/validator"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -124,7 +126,7 @@ func UnaryServerInterceptor(validator TokenValidator, opts ...InterceptorOption)
 			if config.logger != nil {
 				config.logger.Printf("grpcserver: authentication failed for %s: %v", info.FullMethod, err)
 			}
-			return nil, status.Error(config.unauthorizedCode, err.Error())
+			return nil, status.Error(config.unauthorizedCode, status.Convert(err).Message())
 		}
 
 		if err := authorizeClaims(config.authorizer, claims); err != nil {
@@ -193,7 +195,7 @@ func StreamServerInterceptor(validator TokenValidator, opts ...InterceptorOption
 			if config.logger != nil {
 				config.logger.Printf("grpcserver: authentication failed for stream %s: %v", info.FullMethod, err)
 			}
-			return status.Error(config.unauthorizedCode, err.Error())
+			return status.Error(config.unauthorizedCode, status.Convert(err).Message())
 		}
 
 		if err := authorizeClaims(config.authorizer, claims); err != nil {
@@ -254,6 +256,10 @@ func extractAndValidateToken(ctx context.Context, config *InterceptorConfig) (*T
 	// Validate token
 	claims, err := config.validator.ValidateToken(ctx, token)
 	if err != nil {
+		var ve *ivalidator.ValidationError
+		if errors.As(err, &ve) {
+			return nil, status.Error(codes.Unauthenticated, "grpcserver: token validation failed: "+ve.Public)
+		}
 		return nil, status.Errorf(codes.Unauthenticated, "grpcserver: token validation failed: %v", err)
 	}
 

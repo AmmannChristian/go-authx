@@ -537,6 +537,19 @@ func TestTokenManager_WithLoggingEnabled_SetsLogger(t *testing.T) {
 	}
 }
 
+func TestNewTokenManager_WithHTTPClient(t *testing.T) {
+	customClient := &http.Client{Timeout: 5 * time.Second}
+	tm := NewTokenManager(
+		context.Background(),
+		"https://auth.example.com/token",
+		"client", "secret", "openid",
+		WithHTTPClient(customClient),
+	)
+	if tm.httpClient != customClient {
+		t.Errorf("expected httpClient to be set via WithHTTPClient, got %v", tm.httpClient)
+	}
+}
+
 // Benchmark tests
 func BenchmarkTokenManager_GetToken_Cached(b *testing.B) {
 	server := newMockOAuth2Server(b)

@@ -332,8 +332,10 @@ func extractClaimValues(value any) []string {
 		return result
 	case map[string]any:
 		keys := make([]string, 0, len(typed))
-		for key := range typed {
-			keys = append(keys, strings.TrimSpace(key))
+		for key, val := range typed {
+			if isTruthy(val) {
+				keys = append(keys, strings.TrimSpace(key))
+			}
 		}
 		sort.Strings(keys)
 		return keys
@@ -360,7 +362,7 @@ func extractClaimValues(value any) []string {
 		iter := rv.MapRange()
 		for iter.Next() {
 			key := strings.TrimSpace(iter.Key().String())
-			if key != "" {
+			if key != "" && isTruthy(iter.Value().Interface()) {
 				keys = append(keys, key)
 			}
 		}
@@ -368,6 +370,21 @@ func extractClaimValues(value any) []string {
 		return keys
 	default:
 		return nil
+	}
+}
+
+func isTruthy(v any) bool {
+	switch t := v.(type) {
+	case bool:
+		return t
+	case string:
+		return t != ""
+	case float64:
+		return t != 0
+	case nil:
+		return false
+	default:
+		return t != nil
 	}
 }
 

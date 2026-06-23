@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -21,8 +23,9 @@ type TLSConfig struct {
 	// KeyFile is the path to the server private key file (PEM format)
 	KeyFile string
 
-	// CAFile is the path to the CA certificate for client verification (optional)
-	// If empty, client certificates will not be verified
+	// CAFile is the path to the CA certificate for client verification (optional).
+	// It is required when ClientAuth verifies client certificates.
+	// If empty, client certificates can only be requested or required without verification
 	CAFile string
 
 	// ClientAuth specifies the server's policy for TLS client authentication
@@ -69,6 +72,50 @@ type TLSConfig struct {
 //	    log.Fatal(err)
 //	}
 //	server := grpc.NewServer(grpc.Creds(creds))
+//
+// certCache holds a parsed TLS certificate in memory and refreshes it from disk
+// on a fixed interval, so every TLS handshake reads from the cache rather than disk.
+type certCache struct {
+	mu       sync.RWMutex
+	cert     *tls.Certificate
+	certFile string
+	keyFile  string
+}
+
+func newCertCache(certFile, keyFile string) (*certCache, error) {
+	c := &certCache{certFile: certFile, keyFile: keyFile}
+	if err := c.reload(); err != nil {
+		return nil, err
+	}
+	go c.refreshLoop(60 * time.Second)
+	return c, nil
+}
+
+func (c *certCache) reload() error {
+	cert, err := loadCertificate(c.certFile, c.keyFile)
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	c.cert = &cert
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *certCache) refreshLoop(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for range ticker.C {
+		_ = c.reload()
+	}
+}
+
+func (c *certCache) getCertificate(_ *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.cert, nil
+}
+
 func NewServerCredentials(cfg *TLSConfig) (credentials.TransportCredentials, error) {
 	if cfg == nil {
 		return nil, errors.New("grpcserver: TLS config is nil")
@@ -79,6 +126,10 @@ func NewServerCredentials(cfg *TLSConfig) (credentials.TransportCredentials, err
 	}
 	if cfg.KeyFile == "" {
 		return nil, errors.New("grpcserver: server key file is required")
+	}
+
+	if requiresClientCA(cfg.ClientAuth) && cfg.CAFile == "" {
+		return nil, errors.New("grpcserver: CA file is required when ClientAuth verifies client certificates")
 	}
 
 	// Create base TLS configuration
@@ -92,24 +143,13 @@ func NewServerCredentials(cfg *TLSConfig) (credentials.TransportCredentials, err
 		tlsConfig.MinVersion = cfg.MinVersion
 	}
 
-	// Validate that server certificate and key can be loaded initially
-	// This ensures we fail fast at startup if certificates are invalid or missing
-	_, err := loadCertificate(cfg.CertFile, cfg.KeyFile)
+	// Load the certificate once at startup and cache it; a background goroutine
+	// refreshes the cache every 60 s so rotation is picked up without restarts.
+	cache, err := newCertCache(cfg.CertFile, cfg.KeyFile)
 	if err != nil {
 		return nil, fmt.Errorf("grpcserver: load server certificate: %w", err)
 	}
-
-	// Configure automatic certificate reloading on each TLS handshake
-	// This allows certificates to be rotated without restarting the server
-	certFile := cfg.CertFile
-	keyFile := cfg.KeyFile
-	tlsConfig.GetCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-		cert, err := loadCertificate(certFile, keyFile)
-		if err != nil {
-			return nil, err
-		}
-		return &cert, nil
-	}
+	tlsConfig.GetCertificate = cache.getCertificate
 
 	// Load CA certificate for client verification if provided
 	if cfg.CAFile != "" {
@@ -145,6 +185,10 @@ func ServerOption(cfg *TLSConfig) (grpc.ServerOption, error) {
 		return nil, err
 	}
 	return grpc.Creds(creds), nil
+}
+
+func requiresClientCA(clientAuth tls.ClientAuthType) bool {
+	return clientAuth == tls.VerifyClientCertIfGiven || clientAuth == tls.RequireAndVerifyClientCert
 }
 
 // loadCertificate loads a TLS certificate from files using secure path handling.

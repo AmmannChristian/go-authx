@@ -246,6 +246,59 @@ func TestClaimsForEvaluation(t *testing.T) {
 	}
 }
 
+func TestExtractClaimValues_MapValueFiltering(t *testing.T) {
+	tests := []struct {
+		name  string
+		input map[string]any
+		want  []string
+	}{
+		{
+			name:  "bool false excluded",
+			input: map[string]any{"admin": false, "viewer": true},
+			want:  []string{"viewer"},
+		},
+		{
+			name:  "float64 zero excluded",
+			input: map[string]any{"admin": float64(0), "viewer": float64(1)},
+			want:  []string{"viewer"},
+		},
+		{
+			name:  "empty string excluded",
+			input: map[string]any{"admin": "", "viewer": "yes"},
+			want:  []string{"viewer"},
+		},
+		{
+			name:  "nil excluded",
+			input: map[string]any{"admin": nil, "viewer": true},
+			want:  []string{"viewer"},
+		},
+		{
+			name:  "all truthy values included",
+			input: map[string]any{"admin": true, "viewer": true},
+			want:  []string{"admin", "viewer"},
+		},
+		{
+			name:  "nested map value is truthy",
+			input: map[string]any{"admin": map[string]any{"org": "x"}, "viewer": false},
+			want:  []string{"admin"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractClaimValues(tt.input)
+			if len(got) != len(tt.want) {
+				t.Fatalf("expected %v, got %v", tt.want, got)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Errorf("index %d: expected %q, got %q", i, tt.want[i], got[i])
+				}
+			}
+		})
+	}
+}
+
 func TestDefaultClaimPathsCopies(t *testing.T) {
 	roles := DefaultRoleClaimPaths()
 	roles[0] = "changed"

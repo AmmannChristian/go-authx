@@ -19,8 +19,9 @@ type TLSConfig struct {
 	// KeyFile is the path to the server private key file (PEM format)
 	KeyFile string
 
-	// CAFile is the path to the CA certificate for client verification (optional)
-	// If empty, client certificates will not be verified
+	// CAFile is the path to the CA certificate for client verification (optional).
+	// It is required when ClientAuth verifies client certificates.
+	// If empty, client certificates can only be requested or required without verification
 	CAFile string
 
 	// ClientAuth specifies the server's policy for TLS client authentication
@@ -74,6 +75,10 @@ func NewTLSConfig(cfg *TLSConfig) (*tls.Config, error) {
 	}
 	if cfg.KeyFile == "" {
 		return nil, errors.New("httpserver: server key file is required")
+	}
+
+	if requiresClientCA(cfg.ClientAuth) && cfg.CAFile == "" {
+		return nil, errors.New("httpserver: CA file is required when ClientAuth verifies client certificates")
 	}
 
 	// Create base TLS configuration
@@ -137,6 +142,10 @@ func ConfigureServer(server *http.Server, cfg *TLSConfig) error {
 
 	server.TLSConfig = tlsConfig
 	return nil
+}
+
+func requiresClientCA(clientAuth tls.ClientAuthType) bool {
+	return clientAuth == tls.VerifyClientCertIfGiven || clientAuth == tls.RequireAndVerifyClientCert
 }
 
 // loadCertificate loads a TLS certificate from files using secure path handling.

@@ -3,10 +3,12 @@ package oauth2client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -105,6 +107,41 @@ func (f *privateKeyJWTFetcher) fetchToken(ctx context.Context) (*oauth2.Token, e
 	return t, nil
 }
 
+func normalizePrivateKeyJWTIssuerURI(rawIssuerURI string) (string, error) {
+	trimmedIssuerURI := strings.TrimRight(strings.TrimSpace(rawIssuerURI), "/")
+	parsedURL, err := url.Parse(trimmedIssuerURI)
+	if err != nil {
+		return "", fmt.Errorf("oauth2: invalid issuer URI: %w", err)
+	}
+
+	if !parsedURL.IsAbs() {
+		return "", errors.New("oauth2: issuer URI must be absolute")
+	}
+	if parsedURL.Scheme != "https" {
+		return "", errors.New("oauth2: issuer URI must use https")
+	}
+	if parsedURL.Host == "" {
+		return "", errors.New("oauth2: issuer URI host is required")
+	}
+	if parsedURL.User != nil {
+		return "", errors.New("oauth2: issuer URI must not include user info")
+	}
+	if parsedURL.RawQuery != "" || parsedURL.Fragment != "" {
+		return "", errors.New("oauth2: issuer URI must not include query or fragment")
+	}
+
+	host := parsedURL.Hostname()
+	if ipAddress, err := netip.ParseAddr(host); err == nil {
+		if ipAddress.IsLoopback() || ipAddress.IsPrivate() ||
+			ipAddress.IsLinkLocalUnicast() || ipAddress.IsLinkLocalMulticast() ||
+			ipAddress.IsMulticast() || ipAddress.IsUnspecified() {
+			return "", errors.New("oauth2: issuer URI must not use local or private IP addresses")
+		}
+	}
+
+	return parsedURL.String(), nil
+}
+
 // NewPrivateKeyJWTTokenManager creates a TokenManager that obtains tokens via the
 // urn:ietf:params:oauth:grant-type:jwt-bearer grant using a ZITADEL service-account
 // key file.
@@ -128,7 +165,10 @@ func NewPrivateKeyJWTTokenManager(
 		return nil, fmt.Errorf("oauth2: failed to parse key file: %w", err)
 	}
 
-	normalizedIssuer := strings.TrimRight(strings.TrimSpace(issuerURI), "/")
+	normalizedIssuer, err := normalizePrivateKeyJWTIssuerURI(issuerURI)
+	if err != nil {
+		return nil, err
+	}
 
 	fetcher := &privateKeyJWTFetcher{
 		privateKey: privateKey,
@@ -136,14 +176,27 @@ func NewPrivateKeyJWTTokenManager(
 		clientID:   envelope.ClientID,
 		issuerURI:  normalizedIssuer,
 		scopes:     strings.Fields(scopes),
-		httpClient: &http.Client{Timeout: defaultHTTPClientTimeout},
+		httpClient: &http.Client{
+			Timeout: defaultHTTPClientTimeout,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}
 
 	tm := newTokenManagerWithFetcher(ctx, fetcher, opts...)
 
 	// If WithHTTPClient was supplied via opts, override the fetcher's client.
 	if tm.httpClient != nil {
-		fetcher.httpClient = tm.httpClient
+		c := tm.httpClient
+		if c.CheckRedirect == nil {
+			copy := *c
+			copy.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			}
+			c = &copy
+		}
+		fetcher.httpClient = c
 	}
 
 	return tm, nil

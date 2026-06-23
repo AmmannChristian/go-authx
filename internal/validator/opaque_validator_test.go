@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"io"
 	"math/big"
 	"net/http"
@@ -406,6 +407,96 @@ func TestOpaqueTokenValidator_ValidateToken_InvalidAudience(t *testing.T) {
 	}
 }
 
+func TestOpaqueTokenValidator_ValidateToken_MissingIssuer(t *testing.T) {
+	client := &http.Client{
+		Transport: testutil.RoundTripFunc(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"active": true, "sub": "user", "aud": ["my-api"]}`)),
+				Request:    r,
+			}, nil
+		}),
+	}
+
+	v, err := NewOpaqueTokenValidator(
+		"https://auth.example.com/oauth2/introspect",
+		"https://auth.example.com",
+		"my-api",
+		"client-id",
+		"client-secret",
+		client,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("failed to create validator: %v", err)
+	}
+
+	_, err = v.ValidateToken(context.Background(), "opaque-token")
+	if err == nil {
+		t.Fatal("expected error for missing issuer")
+	}
+	if !strings.Contains(err.Error(), "invalid issuer claim") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestOpaqueTokenValidator_ValidateToken_MissingOrMalformedAudience(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "missing audience",
+			body: `{"active": true, "iss": "https://auth.example.com", "sub": "user"}`,
+		},
+		{
+			name: "numeric audience",
+			body: `{"active": true, "iss": "https://auth.example.com", "sub": "user", "aud": 123}`,
+		},
+		{
+			name: "array without string audience",
+			body: `{"active": true, "iss": "https://auth.example.com", "sub": "user", "aud": [123, true]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &http.Client{
+				Transport: testutil.RoundTripFunc(func(r *http.Request) (*http.Response, error) {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     make(http.Header),
+						Body:       io.NopCloser(strings.NewReader(tt.body)),
+						Request:    r,
+					}, nil
+				}),
+			}
+
+			v, err := NewOpaqueTokenValidator(
+				"https://auth.example.com/oauth2/introspect",
+				"https://auth.example.com",
+				"my-api",
+				"client-id",
+				"client-secret",
+				client,
+				nil,
+			)
+			if err != nil {
+				t.Fatalf("failed to create validator: %v", err)
+			}
+
+			_, err = v.ValidateToken(context.Background(), "opaque-token")
+			if err == nil {
+				t.Fatal("expected error for missing or malformed audience")
+			}
+			if !strings.Contains(err.Error(), "invalid audience claim") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestOpaqueTokenValidator_ValidateToken_Expired(t *testing.T) {
 	client := &http.Client{
 		Transport: testutil.RoundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -590,7 +681,7 @@ func TestOpaqueTokenValidator_ValidateToken_PrivateKeyJWTRequestAndClaims(t *tes
 			if claims.Subject != "client-id" {
 				t.Fatalf("unexpected assertion sub: %q", claims.Subject)
 			}
-			if len(claims.Audience) != 1 || claims.Audience[0] != "https://auth.example.com" {
+			if len(claims.Audience) != 1 || claims.Audience[0] != "https://auth.example.com/oauth2/introspect" {
 				t.Fatalf("unexpected assertion aud: %v", claims.Audience)
 			}
 			if claims.IssuedAt == nil || claims.ExpiresAt == nil {
@@ -1001,6 +1092,76 @@ func TestParsePrivateKeyPEM_PKCS8EC(t *testing.T) {
 	}
 }
 
+func TestParsePrivateKeyPEM_PKCS1RSA(t *testing.T) {
+	privateKey := mustGenerateRSAKey(t)
+	pemStr := mustEncodeRSAKeyPEM(t, privateKey)
+
+	parsed, err := parsePrivateKeyPEM(pemStr)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := parsed.(*rsa.PrivateKey); !ok {
+		t.Fatalf("expected *rsa.PrivateKey, got %T", parsed)
+	}
+}
+
+func TestParsePrivateKeyPEM_ECSEC1(t *testing.T) {
+	privateKey := mustGenerateECKey(t)
+	der, err := x509.MarshalECPrivateKey(privateKey)
+	if err != nil {
+		t.Fatalf("marshal EC key: %v", err)
+	}
+	pemStr := string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der}))
+
+	parsed, parseErr := parsePrivateKeyPEM(pemStr)
+	if parseErr != nil {
+		t.Fatalf("unexpected error: %v", parseErr)
+	}
+	if _, ok := parsed.(*ecdsa.PrivateKey); !ok {
+		t.Fatalf("expected *ecdsa.PrivateKey, got %T", parsed)
+	}
+}
+
+func TestParsePrivateKeyPEM_InvalidDER(t *testing.T) {
+	pemStr := string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte("not-valid-der")}))
+	if _, err := parsePrivateKeyPEM(pemStr); err == nil {
+		t.Fatal("expected error for invalid DER in PEM block")
+	}
+}
+
+func TestParseRSAPrivateKeyJWK_SmallExponent(t *testing.T) {
+	jwk := privateKeyJWK{
+		N: base64.RawURLEncoding.EncodeToString([]byte{0xFF, 0xFF}),
+		E: base64.RawURLEncoding.EncodeToString([]byte{2}), // e = 2, too small
+		D: base64.RawURLEncoding.EncodeToString([]byte{0xFF}),
+	}
+	_, err := parseRSAPrivateKeyJWK(jwk)
+	if err == nil || !strings.Contains(err.Error(), "exponent must be >= 3") {
+		t.Fatalf("expected exponent error, got %v", err)
+	}
+}
+
+func TestParseECPrivateKeyJWK_PartialXY(t *testing.T) {
+	privateKey := mustGenerateECKey(t)
+	jwk := privateKeyJWK{
+		CRV: "P-256",
+		D:   base64.RawURLEncoding.EncodeToString(privateKey.D.Bytes()),
+		X:   base64.RawURLEncoding.EncodeToString(privateKey.PublicKey.X.Bytes()),
+		Y:   "", // intentionally missing
+	}
+	_, err := parseECPrivateKeyJWK(jwk)
+	if err == nil || !strings.Contains(err.Error(), "requires both x and y") {
+		t.Fatalf("expected partial XY error, got %v", err)
+	}
+}
+
+func TestClaimString_NonStringType(t *testing.T) {
+	claims := map[string]interface{}{"sub": 42}
+	if got := claimString(claims, "sub"); got != "" {
+		t.Errorf("expected empty string for non-string claim, got %q", got)
+	}
+}
+
 func TestParseUnixTimeClaim_CoversTypes(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	unixSeconds := now.Unix()
@@ -1218,7 +1379,7 @@ func TestOpaqueTokenValidator_ValidateToken_IntrospectionFailures(t *testing.T) 
 					Request:    r,
 				}, nil
 			},
-			wantErrMsg: "introspection endpoint returned status",
+			wantErrMsg: "validator: token introspection failed",
 		},
 		{
 			name: "invalid json response",
@@ -1243,6 +1404,20 @@ func TestOpaqueTokenValidator_ValidateToken_IntrospectionFailures(t *testing.T) 
 				}, nil
 			},
 			wantErrMsg: "failed to read introspection response",
+		},
+		{
+			name: "active token without subject",
+			roundTrip: func(r *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body: io.NopCloser(strings.NewReader(
+						`{"active":true,"iss":"https://auth.example.com","aud":"my-api","exp":9999999999}`,
+					)),
+					Request: r,
+				}, nil
+			},
+			wantErrMsg: "invalid subject claim: empty",
 		},
 	}
 
@@ -1351,12 +1526,12 @@ func TestBuildPrivateKeyJWTClientAssertion_UnsupportedSigningMethod(t *testing.T
 	}
 }
 
-func TestBuildPrivateKeyJWTClientAssertion_AudienceFromTrimmedIssuer(t *testing.T) {
+func TestBuildPrivateKeyJWTClientAssertion_AudienceIsIntrospectionURL(t *testing.T) {
 	privateKey := mustGenerateRSAKey(t)
 
 	v := &OpaqueTokenValidator{
 		introspectionURL: "https://auth.example.com/oauth2/introspect",
-		issuer:           " https://auth.example.com/ ",
+		issuer:           "https://auth.example.com",
 		authConfig: IntrospectionClientAuthConfig{
 			ClientID:               "client-id",
 			PrivateKeyJWTAlgorithm: IntrospectionPrivateKeyJWTAlgorithmRS256,
@@ -1384,8 +1559,80 @@ func TestBuildPrivateKeyJWTClientAssertion_AudienceFromTrimmedIssuer(t *testing.
 	if !token.Valid {
 		t.Fatal("expected assertion JWT to be valid")
 	}
-	if len(claims.Audience) != 1 || claims.Audience[0] != "https://auth.example.com" {
-		t.Fatalf("unexpected assertion aud: %v", claims.Audience)
+	if len(claims.Audience) != 1 || claims.Audience[0] != "https://auth.example.com/oauth2/introspect" {
+		t.Fatalf("expected aud to be introspection URL, got: %v", claims.Audience)
+	}
+}
+
+func TestOpaqueTokenValidator_AssertionAudienceIsIntrospectionURL(t *testing.T) {
+	privateKey := mustGenerateRSAKey(t)
+
+	const introspectionURL = "https://auth.example.com/oauth2/introspect"
+	const issuer = "https://auth.example.com"
+
+	var capturedAud jwt.ClaimStrings
+
+	client := &http.Client{
+		Transport: testutil.RoundTripFunc(func(r *http.Request) (*http.Response, error) {
+			bodyBytes, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("failed to read request body: %v", err)
+			}
+			values, err := url.ParseQuery(string(bodyBytes))
+			if err != nil {
+				t.Fatalf("failed to parse form body: %v", err)
+			}
+
+			assertionStr := values.Get("client_assertion")
+			if assertionStr == "" {
+				t.Fatal("expected client_assertion in request body")
+			}
+
+			claims := &jwt.RegisteredClaims{}
+			_, err = jwt.ParseWithClaims(
+				assertionStr,
+				claims,
+				func(tok *jwt.Token) (any, error) { return &privateKey.PublicKey, nil },
+				jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Alg()}),
+			)
+			if err != nil {
+				t.Fatalf("failed to parse client_assertion JWT: %v", err)
+			}
+			capturedAud = claims.Audience
+
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body: io.NopCloser(strings.NewReader(`{
+					"active": true,
+					"iss": "` + issuer + `",
+					"aud": ["my-api"],
+					"sub": "user-123"
+				}`)),
+				Request: r,
+			}, nil
+		}),
+	}
+
+	v := &OpaqueTokenValidator{
+		introspectionURL: introspectionURL,
+		issuer:           issuer,
+		audience:         "my-api",
+		authConfig: IntrospectionClientAuthConfig{
+			Method:                 IntrospectionClientAuthMethodPrivateKeyJWT,
+			ClientID:               "client-id",
+			PrivateKeyJWTAlgorithm: IntrospectionPrivateKeyJWTAlgorithmRS256,
+		},
+		privateKey: privateKey,
+		httpClient: client,
+	}
+
+	if _, err := v.ValidateToken(context.Background(), "opaque-token"); err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+
+	if len(capturedAud) != 1 || capturedAud[0] != introspectionURL {
+		t.Errorf("expected aud=%q, got %v — aud must be the introspection URL, not the issuer", introspectionURL, capturedAud)
 	}
 }
 
@@ -1546,6 +1793,94 @@ func TestOpaqueTokenValidator_ValidateToken_PrivateKeyJWTWithZitadelJSON(t *test
 	}
 }
 
+func TestOpaqueTokenValidator_IntrospectionFailureReturnsValidationError(t *testing.T) {
+	sensitiveBody := `{"error":"server_error","detail":"internal db connection failed at 10.0.0.5"}`
+
+	client := &http.Client{
+		Transport: testutil.RoundTripFunc(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusInternalServerError,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(sensitiveBody)),
+				Request:    r,
+			}, nil
+		}),
+	}
+
+	v, err := NewOpaqueTokenValidator(
+		"https://auth.example.com/oauth2/introspect",
+		"https://auth.example.com",
+		"my-api",
+		"client-id",
+		"client-secret",
+		client,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("failed to create validator: %v", err)
+	}
+
+	_, valErr := v.ValidateToken(context.Background(), "opaque-token")
+	if valErr == nil {
+		t.Fatal("expected error")
+	}
+
+	var ve *ValidationError
+	if !errors.As(valErr, &ve) {
+		t.Fatalf("expected *ValidationError, got %T: %v", valErr, valErr)
+	}
+	if strings.Contains(ve.Public, "server_error") || strings.Contains(ve.Public, "10.0.0.5") {
+		t.Errorf("Public message must not contain response body, got: %q", ve.Public)
+	}
+	if !strings.Contains(ve.Internal.Error(), "server_error") {
+		t.Errorf("Internal error should contain response body for logging, got: %q", ve.Internal.Error())
+	}
+}
+
+func TestOpaqueTokenValidator_BlocksIntrospectionRedirect(t *testing.T) {
+	var roundTrips int
+
+	transport := testutil.RoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		roundTrips++
+		if roundTrips == 1 {
+			return &http.Response{
+				StatusCode: http.StatusTemporaryRedirect,
+				Header:     http.Header{"Location": []string{"https://attacker.example.com/steal"}},
+				Body:       io.NopCloser(strings.NewReader("")),
+				Request:    r,
+			}, nil
+		}
+		// Should never be reached — redirect must be blocked.
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"active":true}`)),
+			Request:    r,
+		}, nil
+	})
+
+	v, err := NewOpaqueTokenValidator(
+		"https://auth.example.com/oauth2/introspect",
+		"https://auth.example.com",
+		"my-api",
+		"client-id",
+		"client-secret",
+		&http.Client{Transport: transport},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("failed to create validator: %v", err)
+	}
+
+	// ValidateToken will fail (307 is not 200), but we only care that the redirect
+	// was not followed to the attacker URL.
+	_, _ = v.ValidateToken(context.Background(), "secret-token")
+
+	if roundTrips != 1 {
+		t.Errorf("expected exactly 1 transport call, got %d — redirect was followed", roundTrips)
+	}
+}
+
 func mustGenerateRSAKey(tb testing.TB) *rsa.PrivateKey {
 	tb.Helper()
 
@@ -1648,4 +1983,13 @@ func (failingReadCloser) Read(_ []byte) (int, error) {
 
 func (failingReadCloser) Close() error {
 	return nil
+}
+
+func TestValidationError_Unwrap(t *testing.T) {
+	internal := errors.New("internal detail")
+	ve := &ValidationError{Public: "token failed", Internal: internal}
+
+	if got := ve.Unwrap(); got != internal {
+		t.Errorf("Unwrap() = %v, want %v", got, internal)
+	}
 }

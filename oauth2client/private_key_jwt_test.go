@@ -9,12 +9,12 @@ import (
 	"encoding/pem"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/AmmannChristian/go-authx/internal/testutil"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/oauth2"
 )
@@ -105,14 +105,125 @@ func TestNewPrivateKeyJWTTokenManager_InvalidKeyFile(t *testing.T) {
 	}
 }
 
+func TestNewPrivateKeyJWTTokenManager_InvalidIssuerURI(t *testing.T) {
+	keyJSON, _ := generateTestKeyFileJSON(t)
+
+	tests := []struct {
+		name      string
+		issuerURI string
+		wantErr   string
+	}{
+		{
+			name:      "plain HTTP",
+			issuerURI: "http://issuer.example.com",
+			wantErr:   "must use https",
+		},
+		{
+			name:      "relative URL",
+			issuerURI: "issuer.example.com",
+			wantErr:   "must be absolute",
+		},
+		{
+			name:      "missing host",
+			issuerURI: "https:///issuer",
+			wantErr:   "host is required",
+		},
+		{
+			name:      "user info",
+			issuerURI: "https://user:pass@issuer.example.com",
+			wantErr:   "must not include user info",
+		},
+		{
+			name:      "query string",
+			issuerURI: "https://issuer.example.com?token=leak",
+			wantErr:   "must not include query or fragment",
+		},
+		{
+			name:      "fragment",
+			issuerURI: "https://issuer.example.com#fragment",
+			wantErr:   "must not include query or fragment",
+		},
+		{
+			name:      "loopback IPv4",
+			issuerURI: "https://127.0.0.1",
+			wantErr:   "local or private",
+		},
+		{
+			name:      "private IPv4",
+			issuerURI: "https://192.168.1.1",
+			wantErr:   "local or private",
+		},
+		{
+			name:      "loopback IPv6",
+			issuerURI: "https://[::1]",
+			wantErr:   "local or private",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewPrivateKeyJWTTokenManager(context.Background(), tt.issuerURI, keyJSON, "openid")
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("expected error containing %q, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestPrivateKeyJWTFetcher_BlocksRedirect(t *testing.T) {
+	_, privateKey := generateTestKeyFileJSON(t)
+
+	var attackerReceived atomic.Bool
+
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		if r.FormValue("assertion") != "" {
+			attackerReceived.Store(true)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer attacker.Close()
+
+	tokenEndpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, attacker.URL+"/token", http.StatusTemporaryRedirect)
+	}))
+	defer tokenEndpoint.Close()
+
+	// Build the fetcher directly (bypasses issuer URI validation) to use plain HTTP test servers.
+	f := &privateKeyJWTFetcher{
+		privateKey: privateKey,
+		keyID:      "test-key-id",
+		clientID:   "test-client-id",
+		issuerURI:  tokenEndpoint.URL,
+		scopes:     []string{"openid"},
+		httpClient: &http.Client{
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
+	}
+
+	// fetchToken will fail (307 is not 200), but that's expected — we only care that
+	// the assertion body was not forwarded to the attacker server.
+	_, _ = f.fetchToken(context.Background())
+
+	if attackerReceived.Load() {
+		t.Error("attacker server received the assertion body — redirect was followed")
+	}
+}
+
 func TestPrivateKeyJWTFetcher_AssertionClaims(t *testing.T) {
-	keyJSON, privateKey := generateTestKeyFileJSON(t)
+	_, privateKey := generateTestKeyFileJSON(t)
 
 	var capturedAssertion string
 	var capturedGrantType string
 	var capturedScope string
 
-	server := testutil.NewLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Plain HTTP server: issuer URI validation is bypassed when building the fetcher directly.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
@@ -124,20 +235,18 @@ func TestPrivateKeyJWTFetcher_AssertionClaims(t *testing.T) {
 	}))
 	defer server.Close()
 
-	tm, err := NewPrivateKeyJWTTokenManager(
-		context.Background(),
-		server.URL,
-		keyJSON,
-		"openid",
-		WithHTTPClient(&http.Client{}),
-	)
-	if err != nil {
-		t.Fatalf("failed to create token manager: %v", err)
+	f := &privateKeyJWTFetcher{
+		privateKey: privateKey,
+		keyID:      "test-key-id",
+		clientID:   "test-client-id",
+		issuerURI:  server.URL,
+		scopes:     []string{"openid"},
+		httpClient: http.DefaultClient,
 	}
 
-	_, err = tm.GetTokenWithContext(context.Background())
+	_, err := f.fetchToken(context.Background())
 	if err != nil {
-		t.Fatalf("failed to get token: %v", err)
+		t.Fatalf("failed to fetch token: %v", err)
 	}
 
 	// Verify grant type
@@ -206,26 +315,25 @@ func TestPrivateKeyJWTFetcher_AssertionClaims(t *testing.T) {
 }
 
 func TestPrivateKeyJWTTokenManager_CachingBehavior(t *testing.T) {
-	keyJSON, _ := generateTestKeyFileJSON(t)
+	_, privateKey := generateTestKeyFileJSON(t)
 
 	var requestCount atomic.Int32
 
-	server := testutil.NewLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requestCount.Add(1)
 		tokenResponseHandler("cached-token", 3600)(w, nil)
 	}))
 	defer server.Close()
 
-	tm, err := NewPrivateKeyJWTTokenManager(
-		context.Background(),
-		server.URL,
-		keyJSON,
-		"openid",
-		WithHTTPClient(&http.Client{}),
-	)
-	if err != nil {
-		t.Fatalf("failed to create token manager: %v", err)
+	f := &privateKeyJWTFetcher{
+		privateKey: privateKey,
+		keyID:      "test-key-id",
+		clientID:   "test-client-id",
+		issuerURI:  server.URL,
+		scopes:     []string{"openid"},
+		httpClient: http.DefaultClient,
 	}
+	tm := newTokenManagerWithFetcher(context.Background(), f)
 
 	// First call: cache miss
 	token1, err := tm.GetTokenWithContext(context.Background())
@@ -271,32 +379,31 @@ func TestPrivateKeyJWTTokenManager_ErrorPropagation(t *testing.T) {
 		{name: "500 server error", statusCode: http.StatusInternalServerError, wantInErr: "500"},
 	}
 
-	keyJSON, _ := generateTestKeyFileJSON(t)
+	_, privateKey := generateTestKeyFileJSON(t)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server := testutil.NewLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				http.Error(w, `{"error":"test_error"}`, tt.statusCode)
 			}))
 			defer server.Close()
 
-			tm, err := NewPrivateKeyJWTTokenManager(
-				context.Background(),
-				server.URL,
-				keyJSON,
-				"openid",
-				WithHTTPClient(&http.Client{}),
-			)
-			if err != nil {
-				t.Fatalf("failed to create token manager: %v", err)
+			f := &privateKeyJWTFetcher{
+				privateKey: privateKey,
+				keyID:      "test-key-id",
+				clientID:   "test-client-id",
+				issuerURI:  server.URL,
+				scopes:     []string{"openid"},
+				httpClient: http.DefaultClient,
 			}
+			tm := newTokenManagerWithFetcher(context.Background(), f)
 
-			_, err = tm.GetTokenWithContext(context.Background())
-			if err == nil {
+			_, fetchErr := tm.GetTokenWithContext(context.Background())
+			if fetchErr == nil {
 				t.Fatal("expected error for non-200 response")
 			}
-			if !strings.Contains(err.Error(), tt.wantInErr) {
-				t.Errorf("expected %q in error, got: %v", tt.wantInErr, err)
+			if !strings.Contains(fetchErr.Error(), tt.wantInErr) {
+				t.Errorf("expected %q in error, got: %v", tt.wantInErr, fetchErr)
 			}
 
 			// Token must not be cached after error
@@ -308,59 +415,114 @@ func TestPrivateKeyJWTTokenManager_ErrorPropagation(t *testing.T) {
 }
 
 func TestPrivateKeyJWTTokenManager_TimeoutContextCancelled(t *testing.T) {
-	keyJSON, _ := generateTestKeyFileJSON(t)
+	_, privateKey := generateTestKeyFileJSON(t)
 
-	server := testutil.NewLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
-		case <-time.After(10 * time.Second):
+		case <-time.After(200 * time.Millisecond):
 		}
 		http.Error(w, "timeout", http.StatusGatewayTimeout)
 	}))
 	defer server.Close()
 
-	tm, err := NewPrivateKeyJWTTokenManager(
-		context.Background(),
-		server.URL,
-		keyJSON,
-		"openid",
-		WithHTTPClient(&http.Client{}),
-	)
-	if err != nil {
-		t.Fatalf("failed to create token manager: %v", err)
+	f := &privateKeyJWTFetcher{
+		privateKey: privateKey,
+		keyID:      "test-key-id",
+		clientID:   "test-client-id",
+		issuerURI:  server.URL,
+		scopes:     []string{"openid"},
+		httpClient: &http.Client{Transport: &http.Transport{DisableKeepAlives: true}},
 	}
+	tm := newTokenManagerWithFetcher(context.Background(), f)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	_, err = tm.GetTokenWithContext(ctx)
+	_, err := tm.GetTokenWithContext(ctx)
 	if err == nil {
 		t.Fatal("expected error when context is cancelled")
 	}
 }
 
 func TestPrivateKeyJWTTokenManager_TimeoutHTTPClient(t *testing.T) {
-	keyJSON, _ := generateTestKeyFileJSON(t)
+	_, privateKey := generateTestKeyFileJSON(t)
 
-	server := testutil.NewLocalHTTPServer(t, http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		time.Sleep(500 * time.Millisecond) // hang longer than client timeout
 	}))
 	defer server.Close()
 
-	// Short client timeout; no context deadline set
-	tm, err := NewPrivateKeyJWTTokenManager(
-		context.Background(),
-		server.URL,
-		keyJSON,
-		"openid",
-		WithHTTPClient(&http.Client{Timeout: 100 * time.Millisecond}),
-	)
-	if err != nil {
-		t.Fatalf("failed to create token manager: %v", err)
+	f := &privateKeyJWTFetcher{
+		privateKey: privateKey,
+		keyID:      "test-key-id",
+		clientID:   "test-client-id",
+		issuerURI:  server.URL,
+		scopes:     []string{"openid"},
+		httpClient: &http.Client{Timeout: 100 * time.Millisecond},
 	}
+	tm := newTokenManagerWithFetcher(context.Background(), f)
 
-	_, err = tm.GetTokenWithContext(context.Background())
+	_, err := tm.GetTokenWithContext(context.Background())
 	if err == nil {
 		t.Fatal("expected error when http.Client timeout fires")
+	}
+}
+
+func TestNewPrivateKeyJWTTokenManager_WithHTTPClient(t *testing.T) {
+	keyJSON, _ := generateTestKeyFileJSON(t)
+
+	customClient := &http.Client{
+		Timeout: 42 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	tm, err := NewPrivateKeyJWTTokenManager(
+		context.Background(),
+		"https://issuer.example.com",
+		keyJSON,
+		"openid",
+		WithHTTPClient(customClient),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	fetcher, ok := tm.fetcher.(*privateKeyJWTFetcher)
+	if !ok {
+		t.Fatal("expected privateKeyJWTFetcher")
+	}
+	if fetcher.httpClient != customClient {
+		t.Error("expected WithHTTPClient override to be applied to fetcher")
+	}
+}
+
+func TestNewPrivateKeyJWTTokenManager_WithHTTPClient_NoRedirect(t *testing.T) {
+	keyJSON, _ := generateTestKeyFileJSON(t)
+
+	clientWithoutRedirect := &http.Client{Timeout: 5 * time.Second}
+
+	tm, err := NewPrivateKeyJWTTokenManager(
+		context.Background(),
+		"https://issuer.example.com",
+		keyJSON,
+		"openid",
+		WithHTTPClient(clientWithoutRedirect),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	fetcher, ok := tm.fetcher.(*privateKeyJWTFetcher)
+	if !ok {
+		t.Fatal("expected privateKeyJWTFetcher")
+	}
+	if fetcher.httpClient == clientWithoutRedirect {
+		t.Error("expected a copy with CheckRedirect set, not the original client")
+	}
+	if fetcher.httpClient.CheckRedirect == nil {
+		t.Error("expected CheckRedirect to be set on the copied client")
 	}
 }

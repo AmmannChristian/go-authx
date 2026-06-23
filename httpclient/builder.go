@@ -160,6 +160,8 @@ func (b *Builder) Build() (*http.Client, error) {
 		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		}
+	} else if b.tokenManager != nil {
+		client.CheckRedirect = sameOriginRedirectPolicy
 	}
 
 	return client, nil
@@ -211,7 +213,21 @@ func (b *Builder) buildTLSConfig() (*tls.Config, error) {
 func NewHTTPClient(tm *oauth2client.TokenManager) *http.Client {
 	transport := NewOAuth2Transport(tm, nil)
 	return &http.Client{
-		Transport: transport,
-		Timeout:   30 * time.Second,
+		Transport:     transport,
+		Timeout:       30 * time.Second,
+		CheckRedirect: sameOriginRedirectPolicy,
 	}
+}
+
+func sameOriginRedirectPolicy(req *http.Request, via []*http.Request) error {
+	if len(via) == 0 {
+		return nil
+	}
+
+	previous := via[len(via)-1]
+	if req.URL.Scheme != previous.URL.Scheme || req.URL.Host != previous.URL.Host {
+		return http.ErrUseLastResponse
+	}
+
+	return nil
 }

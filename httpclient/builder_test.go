@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -646,5 +647,130 @@ func BenchmarkBuilder_Build_WithOAuth2(b *testing.B) {
 			b.Fatalf("Build failed: %v", err)
 		}
 		_ = client
+	}
+}
+
+func TestSameOriginRedirectPolicy(t *testing.T) {
+	makeReq := func(rawURL string) *http.Request {
+		req, _ := http.NewRequest("GET", rawURL, nil)
+		return req
+	}
+
+	// Empty via slice — defensive guard, returns nil
+	if err := sameOriginRedirectPolicy(makeReq("http://example.com/"), nil); err != nil {
+		t.Errorf("expected nil for empty via, got %v", err)
+	}
+	if err := sameOriginRedirectPolicy(makeReq("http://example.com/"), []*http.Request{}); err != nil {
+		t.Errorf("expected nil for empty via slice, got %v", err)
+	}
+
+	// Same origin — redirect allowed
+	via := []*http.Request{makeReq("http://example.com/page1")}
+	if err := sameOriginRedirectPolicy(makeReq("http://example.com/page2"), via); err != nil {
+		t.Errorf("expected nil for same-origin redirect, got %v", err)
+	}
+
+	// Cross host — blocked
+	via2 := []*http.Request{makeReq("http://example.com/")}
+	if err := sameOriginRedirectPolicy(makeReq("http://attacker.com/"), via2); err != http.ErrUseLastResponse {
+		t.Errorf("expected ErrUseLastResponse for cross-host, got %v", err)
+	}
+
+	// Cross scheme — blocked
+	via3 := []*http.Request{makeReq("http://example.com/")}
+	if err := sameOriginRedirectPolicy(makeReq("https://example.com/"), via3); err != http.ErrUseLastResponse {
+		t.Errorf("expected ErrUseLastResponse for cross-scheme, got %v", err)
+	}
+}
+
+func TestBuilder_Build_WithOAuth2_BlocksCrossHostRedirect(t *testing.T) {
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/token" {
+			t.Errorf("unexpected token path: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"mock-token","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer tokenServer.Close()
+
+	attackerReceivedAuth := make(chan string, 1)
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attackerReceivedAuth <- r.Header.Get("Authorization")
+		_, _ = w.Write([]byte("attacker"))
+	}))
+	defer attacker.Close()
+
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, attacker.URL, http.StatusFound)
+	}))
+	defer api.Close()
+
+	client, err := NewBuilder().
+		WithOAuth2(context.Background(), tokenServer.URL+"/token", "client", "secret", "openid").
+		Build()
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	resp, err := client.Get(api.URL)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("expected redirect response, got %d", resp.StatusCode)
+	}
+
+	select {
+	case auth := <-attackerReceivedAuth:
+		t.Fatalf("attacker server received Authorization header: %q", auth)
+	default:
+	}
+}
+
+func TestNewHTTPClient_BlocksCrossHostRedirect(t *testing.T) {
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/token" {
+			t.Errorf("unexpected token path: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"mock-access-token","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer tokenServer.Close()
+
+	attackerReceivedAuth := make(chan string, 1)
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attackerReceivedAuth <- r.Header.Get("Authorization")
+		_, _ = w.Write([]byte("attacker"))
+	}))
+	defer attacker.Close()
+
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, attacker.URL, http.StatusFound)
+	}))
+	defer api.Close()
+
+	tm := oauth2client.NewTokenManager(context.Background(), tokenServer.URL+"/token", "client", "secret", "openid")
+	client := NewHTTPClient(tm)
+
+	resp, err := client.Get(api.URL)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("expected redirect response, got %d", resp.StatusCode)
+	}
+
+	select {
+	case auth := <-attackerReceivedAuth:
+		t.Fatalf("attacker server received Authorization header: %q", auth)
+	default:
 	}
 }

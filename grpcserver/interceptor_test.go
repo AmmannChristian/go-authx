@@ -684,6 +684,133 @@ func TestStreamServerInterceptor_ExemptMethod_WithLogger(t *testing.T) {
 	}
 }
 
+func TestStreamServerInterceptor_AuthorizationFailure(t *testing.T) {
+	validator := &mockValidator{} // returns valid claims with no roles
+
+	interceptor := StreamServerInterceptor(
+		validator,
+		WithAuthorizationPolicy(AuthorizationPolicy{RequiredRoles: []string{"admin"}}),
+	)
+
+	ctx := metadata.NewIncomingContext(
+		context.Background(),
+		metadata.Pairs("authorization", "Bearer valid-token"),
+	)
+	stream := &mockServerStream{ctx: ctx}
+	info := &grpc.StreamServerInfo{FullMethod: "/test.Service/StreamMethod"}
+
+	err := interceptor(nil, stream, info, func(srv interface{}, stream grpc.ServerStream) error {
+		t.Error("handler should not be called when authorization fails")
+		return nil
+	})
+
+	if err == nil {
+		t.Fatal("expected authorization failure error")
+	}
+	st, ok := status.FromError(err)
+	if !ok {
+		t.Fatal("expected gRPC status error")
+	}
+	if st.Code() != codes.PermissionDenied {
+		t.Errorf("expected PermissionDenied, got %v", st.Code())
+	}
+}
+
+func TestStreamServerInterceptor_AuthorizationFailure_WithLogger(t *testing.T) {
+	logger := &mockLogger{}
+	validator := &mockValidator{} // returns valid claims with no roles
+
+	interceptor := StreamServerInterceptor(
+		validator,
+		WithAuthorizationPolicy(AuthorizationPolicy{RequiredRoles: []string{"admin"}}),
+		WithInterceptorLogger(logger),
+	)
+
+	ctx := metadata.NewIncomingContext(
+		context.Background(),
+		metadata.Pairs("authorization", "Bearer valid-token"),
+	)
+	stream := &mockServerStream{ctx: ctx}
+	info := &grpc.StreamServerInfo{FullMethod: "/test.Service/StreamMethod"}
+
+	err := interceptor(nil, stream, info, func(srv interface{}, stream grpc.ServerStream) error {
+		t.Error("handler should not be called")
+		return nil
+	})
+
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	st, _ := status.FromError(err)
+	if st.Code() != codes.PermissionDenied {
+		t.Errorf("expected PermissionDenied, got %v", st.Code())
+	}
+	if len(logger.getMessages()) == 0 {
+		t.Error("expected logger to be called for authorization failure")
+	}
+}
+
+func TestStreamServerInterceptor_ValidationError_WithLogger(t *testing.T) {
+	logger := &mockLogger{}
+	validator := &mockValidator{
+		validateFunc: func(ctx context.Context, token string) (*TokenClaims, error) {
+			return nil, errors.New("token expired")
+		},
+	}
+
+	interceptor := StreamServerInterceptor(validator, WithInterceptorLogger(logger))
+
+	ctx := metadata.NewIncomingContext(
+		context.Background(),
+		metadata.Pairs("authorization", "Bearer expired-token"),
+	)
+	stream := &mockServerStream{ctx: ctx}
+	info := &grpc.StreamServerInfo{FullMethod: "/test.Service/StreamMethod"}
+
+	err := interceptor(nil, stream, info, func(srv interface{}, stream grpc.ServerStream) error {
+		t.Error("handler should not be called")
+		return nil
+	})
+
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if len(logger.getMessages()) == 0 {
+		t.Error("expected logger to be called for validation failure")
+	}
+}
+
+func TestUnaryServerInterceptor_AuthorizationFailure(t *testing.T) {
+	validator := &mockValidator{} // returns valid claims with no roles
+
+	interceptor := UnaryServerInterceptor(
+		validator,
+		WithAuthorizationPolicy(AuthorizationPolicy{RequiredRoles: []string{"admin"}}),
+	)
+
+	ctx := metadata.NewIncomingContext(
+		context.Background(),
+		metadata.Pairs("authorization", "Bearer valid-token"),
+	)
+	info := &grpc.UnaryServerInfo{FullMethod: "/test.Service/Method"}
+
+	_, err := interceptor(ctx, "request", info, func(ctx context.Context, req interface{}) (interface{}, error) {
+		t.Error("handler should not be called when authorization fails")
+		return nil, nil
+	})
+
+	if err == nil {
+		t.Fatal("expected authorization failure error")
+	}
+	st, ok := status.FromError(err)
+	if !ok {
+		t.Fatal("expected gRPC status error")
+	}
+	if st.Code() != codes.PermissionDenied {
+		t.Errorf("expected PermissionDenied, got %v", st.Code())
+	}
+}
+
 func TestUnaryServerInterceptor_ValidationError_WithLogger(t *testing.T) {
 	logger := &mockLogger{}
 	validator := &mockValidator{
