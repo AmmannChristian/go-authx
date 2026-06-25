@@ -58,9 +58,16 @@ type IntrospectionClientAuthConfig struct {
 	ClientID string
 	// #nosec G117 -- Public API field name is intentional for OAuth client_secret config.
 	ClientSecret string
+	// PrivateKey is a PEM, JWK, or ZITADEL key JSON private key for private_key_jwt.
+	// ZITADEL application key JSON can infer ClientID and PrivateKeyJWTKeyID.
+	// Key JSON without clientId requires ClientID to be configured explicitly.
 	// #nosec G117 -- Public API field name is intentional for private_key_jwt config.
-	PrivateKey             string
-	PrivateKeyJWTKeyID     string
+	PrivateKey string
+	// PrivateKeyJWTKeyID sets the optional JWT kid header. It can be inferred from
+	// JWK kid or ZITADEL keyId when PrivateKey contains JSON key material.
+	PrivateKeyJWTKeyID string
+	// PrivateKeyJWTAlgorithm sets the assertion signing algorithm. If empty, it is
+	// inferred from the private key type.
 	PrivateKeyJWTAlgorithm string
 }
 

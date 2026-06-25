@@ -92,12 +92,15 @@
 //	        httpserver.IntrospectionClientAuthConfig{
 //	            Method:                 httpserver.IntrospectionClientAuthMethodPrivateKeyJWT,
 //	            ClientID:               "introspection-client-id",
-//	            PrivateKey:             string(privateKeyPEM), // PEM, JWK, or Zitadel key JSON
+//	            PrivateKey:             string(privateKeyPEM), // PEM, JWK, or ZITADEL key JSON
 //	            PrivateKeyJWTKeyID:     "my-key-id",           // optional
 //	            PrivateKeyJWTAlgorithm: httpserver.IntrospectionPrivateKeyJWTAlgorithmRS256, // optional
 //	        },
 //	    ).
 //	    Build()
+//
+// ZITADEL application key JSON can infer ClientID and PrivateKeyJWTKeyID. Key JSON
+// without clientId requires ClientID to be configured explicitly.
 //
 // # Security Considerations
 //

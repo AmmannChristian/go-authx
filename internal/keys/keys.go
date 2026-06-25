@@ -23,7 +23,7 @@ type ZitadelKeyEnvelope struct {
 	AppID    string `json:"appId"`
 }
 
-// ParseZitadelKeyEnvelope parses a ZITADEL service-account key JSON and returns
+// ParseZitadelKeyEnvelope parses a ZITADEL key JSON and returns
 // the envelope metadata and the parsed private key.
 func ParseZitadelKeyEnvelope(rawJSON string) (ZitadelKeyEnvelope, any, error) {
 	var envelope ZitadelKeyEnvelope

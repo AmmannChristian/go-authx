@@ -15,6 +15,7 @@ Reusable Go library for OAuth2/OIDC authentication with support for both **clien
 - **OAuth2 Token Management**: Client-credentials flow with early refresh and scope parsing
 - **Context-Aware Token Fetching**: Respects cancellation and deadlines via `GetTokenWithContext()`
 - **Optional Logging**: Configurable token refresh logging with custom logger support
+- **ZITADEL Private Key JWT**: Supports ZITADEL `serviceaccount` and `application` key files for JWT bearer token requests
 - **gRPC Client Support**: Automatic Bearer injection via interceptors for unary and streaming calls
 - **HTTP/REST Client Support**: OAuth2-enabled `http.Client` with custom `RoundTripper`
 - **Token Reuse**: Single `TokenManager` can be shared across multiple gRPC and HTTP clients
@@ -43,6 +44,10 @@ Reusable Go library for OAuth2/OIDC authentication with support for both **clien
 - When using opaque token introspection, this library supports two client authentication methods from your service to the IdP:
   - `client_secret_basic` (default, backward-compatible)
   - `private_key_jwt` (RFC 7523)
+- `oauth2client.NewPrivateKeyJWTTokenManager` accepts ZITADEL key JSON files:
+  - `type: "serviceaccount"` uses `userId` as the JWT `iss`/`sub`.
+  - `type: "application"` uses `clientId` as the JWT `iss`/`sub`.
+- For server-side opaque token introspection with `private_key_jwt`, `PrivateKey` may be PEM, JWK, or ZITADEL key JSON. ZITADEL application key JSON can infer `ClientID`/`PrivateKeyJWTKeyID`; key JSON without `clientId` requires `ClientID` to be set explicitly.
 
 ## AuthN vs Authorization
 
@@ -100,6 +105,22 @@ conn, err := grpc.NewClient(
     grpc.WithUnaryInterceptor(tm.UnaryClientInterceptor()),
     grpc.WithStreamInterceptor(tm.StreamClientInterceptor()),
 )
+```
+
+#### ZITADEL Private Key JWT
+
+```go
+// ZITADEL serviceaccount keys use userId as JWT iss/sub.
+// ZITADEL application keys use clientId as JWT iss/sub.
+tm, err := oauth2client.NewPrivateKeyJWTTokenManager(
+    ctx,
+    "https://my-org.zitadel.cloud",
+    string(zitadelKeyJSON),
+    "openid profile",
+)
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 ### grpcclient
@@ -311,7 +332,7 @@ opaqueValidatorPrivateKeyJWT, err := grpcserver.NewValidatorBuilder(issuerURL, a
         grpcserver.IntrospectionClientAuthConfig{
             Method:                 grpcserver.IntrospectionClientAuthMethodPrivateKeyJWT,
             ClientID:               "introspection-client-id",
-            PrivateKey:             string(privateKeyPEM), // PEM, JWK, or Zitadel key JSON
+            PrivateKey:             string(privateKeyPEM), // PEM, JWK, or ZITADEL key JSON
             PrivateKeyJWTKeyID:     "my-key-id",           // optional
             PrivateKeyJWTAlgorithm: grpcserver.IntrospectionPrivateKeyJWTAlgorithmRS256, // optional
         },
@@ -480,7 +501,7 @@ opaqueValidatorPrivateKeyJWT, err := httpserver.NewValidatorBuilder(issuerURL, a
         httpserver.IntrospectionClientAuthConfig{
             Method:                 httpserver.IntrospectionClientAuthMethodPrivateKeyJWT,
             ClientID:               "introspection-client-id",
-            PrivateKey:             string(privateKeyPEM), // PEM, JWK, or Zitadel key JSON
+            PrivateKey:             string(privateKeyPEM), // PEM, JWK, or ZITADEL key JSON
             PrivateKeyJWTKeyID:     "my-key-id",           // optional
             PrivateKeyJWTAlgorithm: httpserver.IntrospectionPrivateKeyJWTAlgorithmRS256, // optional
         },
@@ -603,7 +624,7 @@ go get github.com/AmmannChristian/go-authx
 
 ## Requirements
 
-- Go 1.25.7 or higher
+- Go 1.26.4 or higher
 - golang.org/x/oauth2
 - google.golang.org/grpc
 

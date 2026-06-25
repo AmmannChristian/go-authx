@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.5] - 2026-06-25
+
+### Added
+- `NewPrivateKeyJWTTokenManager` now supports ZITADEL `serviceaccount` key JSON files in addition to ZITADEL `application` key JSON files.
+
+### Changed
+- ZITADEL JWT bearer assertions now choose `iss`/`sub` by key type: `userId` for `serviceaccount` keys and `clientId` for `application` keys.
+- ZITADEL key parsing now trims `userId` metadata and documents both supported key envelope formats.
+- README and package docs now describe ZITADEL private-key JWT key-type handling and the Go `1.26.4` requirement.
+
+### Fixed
+- `NewPrivateKeyJWTTokenManager` now rejects unsupported ZITADEL key types and missing key-type subject fields instead of building assertions with an empty or wrong subject.
+
+### Tests
+- Added subject-routing coverage for ZITADEL `serviceaccount` and `application` keys, missing `userId`, and unsupported key types.
+
+## [1.2.4] - 2026-06-25
+
+### Fixed
+- Tightened HTTP middleware exempt-path matching so exact exemptions require exact raw-path matches and prefix exemptions must remain inside the exempt namespace after canonicalization.
+- Fixed `examples/grpc_server_with_oauth2.go` to pass `30 * time.Minute` to `WithCacheTTL` instead of a raw integer duration.
+
+### Tests
+- Added HTTP middleware regression tests for cleaned exact-path and prefix-path exemption bypass attempts.
+
+### CI
+- Aligned coverage and release workflows with the project Go `1.26.4` toolchain.
+
 ## [1.2.3] - 2026-06-23
 
 ### Changed
@@ -183,7 +211,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for OAuth2 scopes
 - Context isolation for token claims
 
-[Unreleased]: https://github.com/AmmannChristian/go-authx/compare/v1.2.3...HEAD
+[Unreleased]: https://github.com/AmmannChristian/go-authx/compare/v1.2.5...HEAD
+[1.2.5]: https://github.com/AmmannChristian/go-authx/compare/v1.2.4...v1.2.5
+[1.2.4]: https://github.com/AmmannChristian/go-authx/compare/v1.2.3...v1.2.4
 [1.2.3]: https://github.com/AmmannChristian/go-authx/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/AmmannChristian/go-authx/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/AmmannChristian/go-authx/compare/v1.2.0...v1.2.1
