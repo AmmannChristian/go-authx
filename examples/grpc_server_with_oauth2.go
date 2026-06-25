@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"time"
 
 	"github.com/AmmannChristian/go-authx/grpcserver"
 	"google.golang.org/grpc"
@@ -114,8 +115,8 @@ func main() {
 
 	// Build token validator using the fluent builder
 	validator, err := grpcserver.NewValidatorBuilder(issuerURL, audience).
-		WithLogger(log.Default()).    // Enable logging for debugging
-		WithCacheTTL(30 * 60 * 1000). // Cache JWKS for 30 minutes
+		WithLogger(log.Default()).      // Enable logging for debugging
+		WithCacheTTL(30 * time.Minute). // Cache JWKS for 30 minutes
 		Build()
 	if err != nil {
 		log.Fatalf("Failed to create token validator: %v", err)
