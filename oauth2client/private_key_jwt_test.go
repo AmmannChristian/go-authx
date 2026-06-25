@@ -19,8 +19,37 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// generateTestKeyFileJSON returns a ZITADEL service-account key JSON and the underlying RSA key.
+// generateTestKeyFileJSON returns a ZITADEL serviceaccount key JSON and the underlying RSA key.
 func generateTestKeyFileJSON(tb testing.TB) (string, *rsa.PrivateKey) {
+	tb.Helper()
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		tb.Fatalf("failed to generate RSA key: %v", err)
+	}
+
+	keyPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
+	})
+
+	payload := map[string]string{
+		"type":   "serviceaccount",
+		"keyId":  "test-key-id",
+		"key":    string(keyPEM),
+		"userId": "test-user-id",
+	}
+
+	jsonBytes, err := json.Marshal(payload)
+	if err != nil {
+		tb.Fatalf("failed to marshal key JSON: %v", err)
+	}
+
+	return string(jsonBytes), privateKey
+}
+
+// generateApplicationKeyFileJSON returns a ZITADEL application key JSON and the underlying RSA key.
+func generateApplicationKeyFileJSON(tb testing.TB) (string, *rsa.PrivateKey) {
 	tb.Helper()
 
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -196,7 +225,7 @@ func TestPrivateKeyJWTFetcher_BlocksRedirect(t *testing.T) {
 	f := &privateKeyJWTFetcher{
 		privateKey: privateKey,
 		keyID:      "test-key-id",
-		clientID:   "test-client-id",
+		subject:    "test-user-id",
 		issuerURI:  tokenEndpoint.URL,
 		scopes:     []string{"openid"},
 		httpClient: &http.Client{
@@ -238,7 +267,7 @@ func TestPrivateKeyJWTFetcher_AssertionClaims(t *testing.T) {
 	f := &privateKeyJWTFetcher{
 		privateKey: privateKey,
 		keyID:      "test-key-id",
-		clientID:   "test-client-id",
+		subject:    "test-user-id",
 		issuerURI:  server.URL,
 		scopes:     []string{"openid"},
 		httpClient: http.DefaultClient,
@@ -283,11 +312,11 @@ func TestPrivateKeyJWTFetcher_AssertionClaims(t *testing.T) {
 		t.Fatal("unexpected claims type")
 	}
 
-	if claims.Issuer != "test-client-id" {
-		t.Errorf("expected iss=test-client-id, got %q", claims.Issuer)
+	if claims.Issuer != "test-user-id" {
+		t.Errorf("expected iss=test-user-id, got %q", claims.Issuer)
 	}
-	if claims.Subject != "test-client-id" {
-		t.Errorf("expected sub=test-client-id, got %q", claims.Subject)
+	if claims.Subject != "test-user-id" {
+		t.Errorf("expected sub=test-user-id, got %q", claims.Subject)
 	}
 	if len(claims.Audience) == 0 || claims.Audience[0] != server.URL {
 		t.Errorf("expected aud=%q, got %v", server.URL, claims.Audience)
@@ -328,7 +357,7 @@ func TestPrivateKeyJWTTokenManager_CachingBehavior(t *testing.T) {
 	f := &privateKeyJWTFetcher{
 		privateKey: privateKey,
 		keyID:      "test-key-id",
-		clientID:   "test-client-id",
+		subject:    "test-user-id",
 		issuerURI:  server.URL,
 		scopes:     []string{"openid"},
 		httpClient: http.DefaultClient,
@@ -391,7 +420,7 @@ func TestPrivateKeyJWTTokenManager_ErrorPropagation(t *testing.T) {
 			f := &privateKeyJWTFetcher{
 				privateKey: privateKey,
 				keyID:      "test-key-id",
-				clientID:   "test-client-id",
+				subject:    "test-user-id",
 				issuerURI:  server.URL,
 				scopes:     []string{"openid"},
 				httpClient: http.DefaultClient,
@@ -429,7 +458,7 @@ func TestPrivateKeyJWTTokenManager_TimeoutContextCancelled(t *testing.T) {
 	f := &privateKeyJWTFetcher{
 		privateKey: privateKey,
 		keyID:      "test-key-id",
-		clientID:   "test-client-id",
+		subject:    "test-user-id",
 		issuerURI:  server.URL,
 		scopes:     []string{"openid"},
 		httpClient: &http.Client{Transport: &http.Transport{DisableKeepAlives: true}},
@@ -456,7 +485,7 @@ func TestPrivateKeyJWTTokenManager_TimeoutHTTPClient(t *testing.T) {
 	f := &privateKeyJWTFetcher{
 		privateKey: privateKey,
 		keyID:      "test-key-id",
-		clientID:   "test-client-id",
+		subject:    "test-user-id",
 		issuerURI:  server.URL,
 		scopes:     []string{"openid"},
 		httpClient: &http.Client{Timeout: 100 * time.Millisecond},
@@ -524,5 +553,82 @@ func TestNewPrivateKeyJWTTokenManager_WithHTTPClient_NoRedirect(t *testing.T) {
 	}
 	if fetcher.httpClient.CheckRedirect == nil {
 		t.Error("expected CheckRedirect to be set on the copied client")
+	}
+}
+
+func TestNewPrivateKeyJWTTokenManager_SubjectRouting(t *testing.T) {
+	serviceAccountKeyJSON, _ := generateTestKeyFileJSON(t)
+	applicationKeyJSON, _ := generateApplicationKeyFileJSON(t)
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("failed to generate RSA key: %v", err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
+	})
+	makeKeyJSON := func(fields map[string]string) string {
+		fields["key"] = string(keyPEM)
+		b, _ := json.Marshal(fields)
+		return string(b)
+	}
+
+	tests := []struct {
+		name        string
+		keyJSON     string
+		wantErr     string
+		wantSubject string
+	}{
+		{
+			name:        "serviceaccount key uses userId as subject",
+			keyJSON:     serviceAccountKeyJSON,
+			wantSubject: "test-user-id",
+		},
+		{
+			name:        "application key uses clientId as subject",
+			keyJSON:     applicationKeyJSON,
+			wantSubject: "test-client-id",
+		},
+		{
+			name:    "serviceaccount key without userId returns error",
+			keyJSON: makeKeyJSON(map[string]string{"type": "serviceaccount", "keyId": "k1"}),
+			wantErr: "subject field is empty",
+		},
+		{
+			name:    "unknown type returns error",
+			keyJSON: makeKeyJSON(map[string]string{"type": "custom", "keyId": "k1", "clientId": "c1"}),
+			wantErr: "unsupported key type",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tm, err := NewPrivateKeyJWTTokenManager(
+				context.Background(),
+				"https://issuer.example.com",
+				tt.keyJSON,
+				"openid",
+			)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("expected error containing %q, got %v", tt.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			fetcher, ok := tm.fetcher.(*privateKeyJWTFetcher)
+			if !ok {
+				t.Fatal("expected privateKeyJWTFetcher")
+			}
+			if fetcher.subject != tt.wantSubject {
+				t.Errorf("expected subject=%q, got %q", tt.wantSubject, fetcher.subject)
+			}
+		})
 	}
 }

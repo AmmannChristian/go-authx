@@ -28,7 +28,7 @@ const (
 type privateKeyJWTFetcher struct {
 	privateKey any
 	keyID      string
-	clientID   string
+	subject    string
 	issuerURI  string
 	scopes     []string
 	httpClient *http.Client
@@ -39,8 +39,8 @@ func (f *privateKeyJWTFetcher) fetchToken(ctx context.Context) (*oauth2.Token, e
 	jti := fmt.Sprintf("%d-%d", now.UnixNano(), rand.Int64()) // #nosec G404 -- jti only needs uniqueness, not cryptographic security (RFC 7523)
 
 	claims := jwt.RegisteredClaims{
-		Issuer:    f.clientID,
-		Subject:   f.clientID,
+		Issuer:    f.subject,
+		Subject:   f.subject,
 		Audience:  jwt.ClaimStrings{f.issuerURI},
 		ExpiresAt: jwt.NewNumericDate(now.Add(jwtAssertionLifetime)),
 		IssuedAt:  jwt.NewNumericDate(now),
@@ -145,13 +145,14 @@ func normalizePrivateKeyJWTIssuerURI(rawIssuerURI string) (string, error) {
 }
 
 // NewPrivateKeyJWTTokenManager creates a TokenManager that obtains tokens via the
-// urn:ietf:params:oauth:grant-type:jwt-bearer grant using a ZITADEL service-account
-// key file.
+// urn:ietf:params:oauth:grant-type:jwt-bearer grant using a ZITADEL key file.
 //
-// keyFileJSON must be a ZITADEL service-account JSON:
+// keyFileJSON must be one of the ZITADEL key file formats:
 //
-//	{"type":"application","keyId":"...","key":"-----BEGIN ...","clientId":"...","appId":"..."}
+//	serviceaccount: {"type":"serviceaccount","keyId":"...","key":"-----BEGIN ...","userId":"..."}
+//	application:    {"type":"application","keyId":"...","key":"-----BEGIN ...","clientId":"...","appId":"..."}
 //
+// For serviceaccount keys the JWT iss/sub is set to userId; for application keys to clientId.
 // issuerURI is the ZITADEL issuer, e.g. "https://my-org.zitadel.cloud".
 // scopes is space-separated, e.g. "openid".
 // opts may include WithLogger, WithLoggingEnabled, WithHTTPClient.
@@ -167,6 +168,19 @@ func NewPrivateKeyJWTTokenManager(
 		return nil, fmt.Errorf("oauth2: failed to parse key file: %w", err)
 	}
 
+	var subject string
+	switch envelope.Type {
+	case "serviceaccount":
+		subject = envelope.UserID
+	case "application":
+		subject = envelope.ClientID
+	default:
+		return nil, fmt.Errorf("oauth2: unsupported key type %q", envelope.Type)
+	}
+	if subject == "" {
+		return nil, fmt.Errorf("oauth2: key type %q: subject field is empty", envelope.Type)
+	}
+
 	normalizedIssuer, err := normalizePrivateKeyJWTIssuerURI(issuerURI)
 	if err != nil {
 		return nil, err
@@ -175,7 +189,7 @@ func NewPrivateKeyJWTTokenManager(
 	fetcher := &privateKeyJWTFetcher{
 		privateKey: privateKey,
 		keyID:      envelope.KeyID,
-		clientID:   envelope.ClientID,
+		subject:    subject,
 		issuerURI:  normalizedIssuer,
 		scopes:     strings.Fields(scopes),
 		httpClient: &http.Client{

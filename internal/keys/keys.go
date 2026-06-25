@@ -11,12 +11,15 @@ import (
 	"strings"
 )
 
-// ZitadelKeyEnvelope is the JSON structure of a ZITADEL service-account key file.
+// ZitadelKeyEnvelope is the JSON structure of a ZITADEL key file.
+// application:    {"type":"application","keyId":"...","key":"...","clientId":"...","appId":"..."}
+// serviceaccount: {"type":"serviceaccount","keyId":"...","key":"...","userId":"..."}
 type ZitadelKeyEnvelope struct {
 	Type     string `json:"type"`
 	KeyID    string `json:"keyId"`
 	Key      string `json:"key"`
-	ClientID string `json:"clientId"`
+	ClientID string `json:"clientId"` // application keys
+	UserID   string `json:"userId"`   // serviceaccount keys
 	AppID    string `json:"appId"`
 }
 
@@ -40,6 +43,7 @@ func ParseZitadelKeyEnvelope(rawJSON string) (ZitadelKeyEnvelope, any, error) {
 
 	envelope.KeyID = strings.TrimSpace(envelope.KeyID)
 	envelope.ClientID = strings.TrimSpace(envelope.ClientID)
+	envelope.UserID = strings.TrimSpace(envelope.UserID)
 	envelope.AppID = strings.TrimSpace(envelope.AppID)
 
 	return envelope, privateKey, nil
