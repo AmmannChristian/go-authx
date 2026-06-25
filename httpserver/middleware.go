@@ -192,16 +192,22 @@ func Middleware(validator TokenValidator, opts ...MiddlewareOption) func(http.Ha
 
 // isExempt checks if a path is exempt from authentication.
 func isExempt(requestPath string, config *MiddlewareConfig) bool {
-	canonicalPath := canonicalizeExemptPath(requestPath)
-
-	// Check exact path matches
-	if config.exemptPaths[canonicalPath] {
+	// Exact exemptions are exact request-path matches. Do not clean the
+	// attacker-controlled path before matching, otherwise paths such as
+	// /api/../health can become exempt as /health.
+	if config.exemptPaths[requestPath] {
 		return true
 	}
 
-	// Check prefix matches
+	canonicalPath := canonicalizeExemptPath(requestPath)
+
+	// Prefix exemptions require both the raw and cleaned path to remain inside
+	// the exempt namespace. This preserves benign cleaned paths such as
+	// /public/./index.html while failing closed for dot-segment paths that enter
+	// or leave an exempt prefix.
 	for _, prefix := range config.exemptPathPrefixes {
-		if strings.HasPrefix(canonicalPath, canonicalizeExemptPath(prefix)) {
+		canonicalPrefix := canonicalizeExemptPath(prefix)
+		if strings.HasPrefix(requestPath, prefix) && strings.HasPrefix(canonicalPath, canonicalPrefix) {
 			return true
 		}
 	}

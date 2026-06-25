@@ -286,6 +286,46 @@ func TestMiddleware_ExemptPathPrefixCanonicalizesBeforeMatching(t *testing.T) {
 	}
 }
 
+func TestMiddleware_CleanedExactExemptPathRequiresAuth(t *testing.T) {
+	validator := &mockValidator{}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("handler should not be called for non-exact exempt path without auth")
+	})
+
+	middleware := Middleware(validator, WithExemptPaths("/health"))
+	wrappedHandler := middleware(handler)
+
+	req := httptest.NewRequest("GET", "/api/../health", nil)
+	rr := httptest.NewRecorder()
+
+	wrappedHandler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("expected status 401 for cleaned exact exempt path, got %d", rr.Code)
+	}
+}
+
+func TestMiddleware_CleanedPrefixExemptPathRequiresAuth(t *testing.T) {
+	validator := &mockValidator{}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("handler should not be called for path entering exempt prefix without auth")
+	})
+
+	middleware := Middleware(validator, WithExemptPathPrefixes("/public/"))
+	wrappedHandler := middleware(handler)
+
+	req := httptest.NewRequest("GET", "/api/../public/secret", nil)
+	rr := httptest.NewRecorder()
+
+	wrappedHandler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("expected status 401 for cleaned prefix exempt path, got %d", rr.Code)
+	}
+}
+
 func TestMiddleware_NonExemptPath(t *testing.T) {
 	validator := &mockValidator{}
 
@@ -529,10 +569,12 @@ func TestIsExempt(t *testing.T) {
 		exempt bool
 	}{
 		{"/health", true},
+		{"/api/../health", false},
 		{"/metrics", true},
 		{"/public/index.html", true},
 		{"/public/./index.html", true},
 		{"/public/../api/admin", false},
+		{"/api/../public/index.html", false},
 		{"/static/css/style.css", true},
 		{"/api/users", false},
 		{"/healthcheck", false},    // Not exact match
