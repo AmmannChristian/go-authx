@@ -103,6 +103,68 @@ func TestNewPrivateKeyJWTTokenManager_ValidKeyFile(t *testing.T) {
 	}
 }
 
+func TestNewPrivateKeyJWTTokenManagerWithConfig_Defaults(t *testing.T) {
+	keyJSON, _ := generateTestKeyFileJSON(t)
+
+	tm, err := NewPrivateKeyJWTTokenManagerWithConfig(PrivateKeyJWTConfig{
+		KeyJSON:       []byte(keyJSON),
+		TokenEndpoint: "https://issuer.example.com",
+		Scopes:        []string{"openid"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if tm.expiryLeeway != 30*time.Second {
+		t.Errorf("expected expiryLeeway 30s, got %v", tm.expiryLeeway)
+	}
+
+	fetcher, ok := tm.fetcher.(*privateKeyJWTFetcher)
+	if !ok {
+		t.Fatal("expected privateKeyJWTFetcher")
+	}
+	if fetcher.tokenTTL != 5*time.Minute {
+		t.Errorf("expected tokenTTL 5m, got %v", fetcher.tokenTTL)
+	}
+}
+
+func TestNewPrivateKeyJWTTokenManagerWithConfig_ValidationErrors(t *testing.T) {
+	keyJSON, _ := generateTestKeyFileJSON(t)
+
+	tests := []struct {
+		name    string
+		cfg     PrivateKeyJWTConfig
+		wantErr string
+	}{
+		{
+			name: "empty KeyJSON",
+			cfg: PrivateKeyJWTConfig{
+				TokenEndpoint: "https://issuer.example.com",
+			},
+			wantErr: "key JSON is required",
+		},
+		{
+			name: "empty TokenEndpoint",
+			cfg: PrivateKeyJWTConfig{
+				KeyJSON: []byte(keyJSON),
+			},
+			wantErr: "token endpoint is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewPrivateKeyJWTTokenManagerWithConfig(tt.cfg)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("expected error containing %q, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
 func TestNewPrivateKeyJWTTokenManager_InvalidKeyFile(t *testing.T) {
 	tests := []struct {
 		name    string

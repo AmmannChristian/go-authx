@@ -20,10 +20,32 @@ import (
 
 const (
 	// #nosec G101 -- OAuth2/RFC7523 grant-type URI constant, not a credential.
-	grantTypeJWTBearer       = "urn:ietf:params:oauth:grant-type:jwt-bearer"
-	jwtAssertionLifetime     = 60 * time.Second
-	defaultHTTPClientTimeout = 5 * time.Second
+	grantTypeJWTBearer             = "urn:ietf:params:oauth:grant-type:jwt-bearer"
+	jwtAssertionLifetime           = 60 * time.Second
+	defaultPrivateKeyJWTTokenTTL   = 5 * time.Minute
+	defaultPrivateKeyJWTLeewaySecs = 30
+	defaultHTTPClientTimeout       = 5 * time.Second
 )
+
+// PrivateKeyJWTConfig configures a TokenManager for the private_key_jwt grant.
+//
+// TokenEndpoint is the ZITADEL issuer URI, for example "https://my-org.zitadel.cloud".
+// TokenTTL controls the JWT assertion lifetime and defaults to 5 minutes when zero.
+// LeewaySeconds controls the cached-token refresh leeway and defaults to 30 when zero.
+type PrivateKeyJWTConfig struct {
+	// KeyJSON is the raw ZITADEL key JSON.
+	KeyJSON []byte
+	// TokenEndpoint is the ZITADEL issuer URI.
+	TokenEndpoint string
+	// ClientID is optional when the subject can be derived from KeyJSON.
+	ClientID string
+	// Scopes are sent as the OAuth2 scope parameter.
+	Scopes []string
+	// TokenTTL controls the JWT assertion lifetime.
+	TokenTTL time.Duration
+	// LeewaySeconds controls how early cached tokens are refreshed.
+	LeewaySeconds int
+}
 
 type privateKeyJWTFetcher struct {
 	privateKey any
@@ -31,18 +53,23 @@ type privateKeyJWTFetcher struct {
 	subject    string
 	issuerURI  string
 	scopes     []string
+	tokenTTL   time.Duration
 	httpClient *http.Client
 }
 
 func (f *privateKeyJWTFetcher) fetchToken(ctx context.Context) (*oauth2.Token, error) {
 	now := time.Now().UTC()
 	jti := fmt.Sprintf("%d-%d", now.UnixNano(), rand.Int64()) // #nosec G404 -- jti only needs uniqueness, not cryptographic security (RFC 7523)
+	tokenTTL := f.tokenTTL
+	if tokenTTL == 0 {
+		tokenTTL = jwtAssertionLifetime
+	}
 
 	claims := jwt.RegisteredClaims{
 		Issuer:    f.subject,
 		Subject:   f.subject,
 		Audience:  jwt.ClaimStrings{f.issuerURI},
-		ExpiresAt: jwt.NewNumericDate(now.Add(jwtAssertionLifetime)),
+		ExpiresAt: jwt.NewNumericDate(now.Add(tokenTTL)),
 		IssuedAt:  jwt.NewNumericDate(now),
 		ID:        jti,
 	}
@@ -144,6 +171,32 @@ func normalizePrivateKeyJWTIssuerURI(rawIssuerURI string) (string, error) {
 	return parsedURL.String(), nil
 }
 
+func newDefaultPrivateKeyJWTHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: defaultHTTPClientTimeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+func privateKeyJWTSubject(envelope keys.ZitadelKeyEnvelope) (string, error) {
+	var subject string
+	switch envelope.Type {
+	case "serviceaccount":
+		subject = envelope.UserID
+	case "application":
+		subject = envelope.ClientID
+	default:
+		return "", fmt.Errorf("oauth2: unsupported key type %q", envelope.Type)
+	}
+	if subject == "" {
+		return "", fmt.Errorf("oauth2: key type %q: subject field is empty", envelope.Type)
+	}
+
+	return subject, nil
+}
+
 // NewPrivateKeyJWTTokenManager creates a TokenManager that obtains tokens via the
 // urn:ietf:params:oauth:grant-type:jwt-bearer grant using a ZITADEL key file.
 //
@@ -168,17 +221,9 @@ func NewPrivateKeyJWTTokenManager(
 		return nil, fmt.Errorf("oauth2: failed to parse key file: %w", err)
 	}
 
-	var subject string
-	switch envelope.Type {
-	case "serviceaccount":
-		subject = envelope.UserID
-	case "application":
-		subject = envelope.ClientID
-	default:
-		return nil, fmt.Errorf("oauth2: unsupported key type %q", envelope.Type)
-	}
-	if subject == "" {
-		return nil, fmt.Errorf("oauth2: key type %q: subject field is empty", envelope.Type)
+	subject, err := privateKeyJWTSubject(envelope)
+	if err != nil {
+		return nil, err
 	}
 
 	normalizedIssuer, err := normalizePrivateKeyJWTIssuerURI(issuerURI)
@@ -192,12 +237,8 @@ func NewPrivateKeyJWTTokenManager(
 		subject:    subject,
 		issuerURI:  normalizedIssuer,
 		scopes:     strings.Fields(scopes),
-		httpClient: &http.Client{
-			Timeout: defaultHTTPClientTimeout,
-			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		},
+		tokenTTL:   jwtAssertionLifetime,
+		httpClient: newDefaultPrivateKeyJWTHTTPClient(),
 	}
 
 	tm := newTokenManagerWithFetcher(ctx, fetcher, opts...)
@@ -214,6 +255,57 @@ func NewPrivateKeyJWTTokenManager(
 		}
 		fetcher.httpClient = c
 	}
+
+	return tm, nil
+}
+
+// NewPrivateKeyJWTTokenManagerWithConfig creates a TokenManager for the
+// private_key_jwt grant using PrivateKeyJWTConfig.
+func NewPrivateKeyJWTTokenManagerWithConfig(cfg PrivateKeyJWTConfig) (*TokenManager, error) {
+	if len(cfg.KeyJSON) == 0 {
+		return nil, errors.New("oauth2: private key JWT key JSON is required")
+	}
+	if strings.TrimSpace(cfg.TokenEndpoint) == "" {
+		return nil, errors.New("oauth2: private key JWT token endpoint is required")
+	}
+
+	tokenTTL := cfg.TokenTTL
+	if tokenTTL == 0 {
+		tokenTTL = defaultPrivateKeyJWTTokenTTL
+	}
+
+	leewaySeconds := cfg.LeewaySeconds
+	if leewaySeconds == 0 {
+		leewaySeconds = defaultPrivateKeyJWTLeewaySecs
+	}
+
+	envelope, privateKey, err := keys.ParseZitadelKeyEnvelope(string(cfg.KeyJSON))
+	if err != nil {
+		return nil, fmt.Errorf("oauth2: failed to parse key file: %w", err)
+	}
+
+	subject, err := privateKeyJWTSubject(envelope)
+	if err != nil {
+		return nil, err
+	}
+
+	normalizedIssuer, err := normalizePrivateKeyJWTIssuerURI(cfg.TokenEndpoint)
+	if err != nil {
+		return nil, err
+	}
+
+	fetcher := &privateKeyJWTFetcher{
+		privateKey: privateKey,
+		keyID:      envelope.KeyID,
+		subject:    subject,
+		issuerURI:  normalizedIssuer,
+		scopes:     cfg.Scopes,
+		tokenTTL:   tokenTTL,
+		httpClient: newDefaultPrivateKeyJWTHTTPClient(),
+	}
+
+	tm := newTokenManagerWithFetcher(context.Background(), fetcher)
+	tm.expiryLeeway = time.Duration(leewaySeconds) * time.Second
 
 	return tm, nil
 }
