@@ -10,6 +10,7 @@
 //   - Context-aware token fetching with cancellation and deadline support
 //   - gRPC unary and stream client interceptors that inject Bearer tokens
 //   - ZITADEL private_key_jwt token fetching with serviceaccount and application key JSON files
+//   - Config-struct based private_key_jwt construction via PrivateKeyJWTConfig
 //   - Optional logging (WithLogger, WithLoggingEnabled)
 //   - Shareable token manager across multiple gRPC and HTTP clients
 //
@@ -39,13 +40,28 @@
 //
 // NewPrivateKeyJWTTokenManager obtains tokens through the JWT bearer grant using a
 // ZITADEL key JSON file. Serviceaccount keys use userId as the JWT iss/sub, and
-// application keys use clientId as the JWT iss/sub.
+// application keys use clientId as the JWT iss/sub. Existing callers can keep using
+// the parameter-based constructor:
 //
 //	tm, err := oauth2client.NewPrivateKeyJWTTokenManager(
 //	    ctx,
 //	    "https://my-org.zitadel.cloud",
 //	    string(zitadelKeyJSON),
 //	    "openid profile",
+//	)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//
+// NewPrivateKeyJWTTokenManagerWithConfig provides the same flow with a config struct.
+// TokenTTL defaults to 5 minutes when zero, and LeewaySeconds defaults to 30 when zero:
+//
+//	tm, err = oauth2client.NewPrivateKeyJWTTokenManagerWithConfig(
+//	    oauth2client.PrivateKeyJWTConfig{
+//	        KeyJSON:       zitadelKeyJSON,
+//	        TokenEndpoint: "https://my-org.zitadel.cloud",
+//	        Scopes:        []string{"openid", "profile"},
+//	    },
 //	)
 //	if err != nil {
 //	    log.Fatal(err)

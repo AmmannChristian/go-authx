@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.6] - 2026-06-27
+
+### Added
+- Added `PrivateKeyJWTConfig` and `NewPrivateKeyJWTTokenManagerWithConfig(...)` for config-struct based ZITADEL private-key JWT token manager construction.
+
+### Changed
+- Private-key JWT token managers created with config now support configurable JWT assertion lifetime via `TokenTTL`, defaulting to 5 minutes when unset.
+- Private-key JWT token managers created with config now support configurable cached-token refresh leeway via `LeewaySeconds`, defaulting to 30 seconds when unset.
+- README and package docs now document both the existing parameter-based constructor and the new config-based constructor.
+
+### Fixed
+- `NewPrivateKeyJWTTokenManagerWithConfig(...)` validates empty `KeyJSON` and empty `TokenEndpoint` before parsing key material or normalizing the issuer URI.
+
+### Tests
+- Added coverage for `NewPrivateKeyJWTTokenManagerWithConfig(...)` defaults and validation errors.
+
 ## [1.2.5] - 2026-06-25
 
 ### Added
@@ -211,7 +227,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for OAuth2 scopes
 - Context isolation for token claims
 
-[Unreleased]: https://github.com/AmmannChristian/go-authx/compare/v1.2.5...HEAD
+[Unreleased]: https://github.com/AmmannChristian/go-authx/compare/v1.2.6...HEAD
+[1.2]: https://github.com/AmmannChristian/go-authx/compare/v1.2.5...v1.2
 [1.2.5]: https://github.com/AmmannChristian/go-authx/compare/v1.2.4...v1.2.5
 [1.2.4]: https://github.com/AmmannChristian/go-authx/compare/v1.2.3...v1.2.4
 [1.2.3]: https://github.com/AmmannChristian/go-authx/compare/v1.2.2...v1.2.3

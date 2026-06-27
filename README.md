@@ -16,6 +16,7 @@ Reusable Go library for OAuth2/OIDC authentication with support for both **clien
 - **Context-Aware Token Fetching**: Respects cancellation and deadlines via `GetTokenWithContext()`
 - **Optional Logging**: Configurable token refresh logging with custom logger support
 - **ZITADEL Private Key JWT**: Supports ZITADEL `serviceaccount` and `application` key files for JWT bearer token requests
+- **Config-Based Private Key JWT**: Optional `PrivateKeyJWTConfig` constructor with defaults for assertion lifetime and refresh leeway
 - **gRPC Client Support**: Automatic Bearer injection via interceptors for unary and streaming calls
 - **HTTP/REST Client Support**: OAuth2-enabled `http.Client` with custom `RoundTripper`
 - **Token Reuse**: Single `TokenManager` can be shared across multiple gRPC and HTTP clients
@@ -47,6 +48,7 @@ Reusable Go library for OAuth2/OIDC authentication with support for both **clien
 - `oauth2client.NewPrivateKeyJWTTokenManager` accepts ZITADEL key JSON files:
   - `type: "serviceaccount"` uses `userId` as the JWT `iss`/`sub`.
   - `type: "application"` uses `clientId` as the JWT `iss`/`sub`.
+- `oauth2client.NewPrivateKeyJWTTokenManagerWithConfig` provides the same ZITADEL JWT bearer flow through `PrivateKeyJWTConfig`; zero `TokenTTL` defaults to 5 minutes and zero `LeewaySeconds` defaults to 30 seconds.
 - For server-side opaque token introspection with `private_key_jwt`, `PrivateKey` may be PEM, JWK, or ZITADEL key JSON. ZITADEL application key JSON can infer `ClientID`/`PrivateKeyJWTKeyID`; key JSON without `clientId` requires `ClientID` to be set explicitly.
 
 ## AuthN vs Authorization
@@ -60,6 +62,7 @@ Reusable Go library for OAuth2/OIDC authentication with support for both **clien
 
 - No breaking changes: existing AuthN behavior remains unchanged.
 - Authorization is opt-in and enabled only when a policy with requirements is configured.
+- Existing `NewPrivateKeyJWTTokenManager` callers remain supported; the config-based private-key JWT constructor is additive.
 
 ## Packages
 
@@ -117,6 +120,20 @@ tm, err := oauth2client.NewPrivateKeyJWTTokenManager(
     "https://my-org.zitadel.cloud",
     string(zitadelKeyJSON),
     "openid profile",
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+// Or use the config-based constructor when values are already grouped.
+tm, err = oauth2client.NewPrivateKeyJWTTokenManagerWithConfig(
+    oauth2client.PrivateKeyJWTConfig{
+        KeyJSON:       zitadelKeyJSON,
+        TokenEndpoint: "https://my-org.zitadel.cloud",
+        Scopes:        []string{"openid", "profile"},
+        // TokenTTL defaults to 5 minutes when unset.
+        // LeewaySeconds defaults to 30 seconds when unset.
+    },
 )
 if err != nil {
     log.Fatal(err)
